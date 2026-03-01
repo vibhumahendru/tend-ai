@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
+import { API_BASE } from "@/lib/api";
 
 const prompts = [
   "Who do I know who plays padel?",
@@ -27,95 +28,10 @@ interface AssistantMessage {
   results: ResultPerson[];
 }
 
-const hardcodedResponses: AssistantMessage[] = [
-  {
-    intro: "Based on your query, here are the people I found:",
-    results: [
-      {
-        id: "contact-1",
-        name: "Priya Sharma",
-        avatarSeed: "Priya Sharma",
-        lastContactedDaysAgo: 3,
-        summary: "MBA candidate at LBS, exploring consulting and Dubai move",
-        reason: "Mentioned wanting to start playing padel when you met for coffee",
-      },
-      {
-        id: "contact-4",
-        name: "Yuki Tanaka",
-        avatarSeed: "Yuki Tanaka",
-        lastContactedDaysAgo: 4,
-        summary: "Works in product at a fintech, very into sport and fitness",
-        reason: "Invited you to a padel session next week at the gym",
-      },
-      {
-        id: "contact-7",
-        name: "Carlos Rodriguez",
-        avatarSeed: "Carlos Rodriguez",
-        lastContactedDaysAgo: 10,
-        summary: "Training for an ironman, avid padel and tennis player",
-        reason: "Plays padel regularly — mentioned it over lunch last week",
-      },
-    ],
-  },
-  {
-    intro: "Based on your query, here are the people I found:",
-    results: [
-      {
-        id: "contact-7b",
-        name: "Mei Liu",
-        avatarSeed: "Mei Liu",
-        lastContactedDaysAgo: 21,
-        summary: "AI researcher at DeepMind, working on protein folding",
-        reason: "Deep in AI research — great person to learn from in this space",
-      },
-      {
-        id: "contact-2",
-        name: "Marcus Williams",
-        avatarSeed: "Marcus Williams",
-        lastContactedDaysAgo: 2,
-        summary: "Founder launching a climate tech startup, ex-McKinsey",
-        reason: "Building an AI-powered climate tool — actively working with LLMs",
-      },
-      {
-        id: "contact-3",
-        name: "Felix Kumar",
-        avatarSeed: "Felix Kumar",
-        lastContactedDaysAgo: 3,
-        summary: "Engineer and side-project enthusiast, collaborating on AI tool",
-        reason: "You're already building an AI tool together — he's your go-to here",
-      },
-    ],
-  },
-  {
-    intro: "Based on your query, here are the people I found:",
-    results: [
-      {
-        id: "contact-5",
-        name: "Nisha Singh",
-        avatarSeed: "Nisha Singh",
-        lastContactedDaysAgo: 38,
-        summary: "Consultant at Bain, weighing a move into tech",
-        reason: "Thinking about a career transition — a warm check-in would land well",
-      },
-      {
-        id: "contact-6",
-        name: "Omar Ahmed",
-        avatarSeed: "Omar Ahmed",
-        lastContactedDaysAgo: 31,
-        summary: "Based in London, recently back from Tokyo",
-        reason: "Back in town and looking to reconnect — suggested a group dinner",
-      },
-      {
-        id: "contact-8",
-        name: "Elena Mueller",
-        avatarSeed: "Elena Mueller",
-        lastContactedDaysAgo: 8,
-        summary: "Fintech product lead, moving to Singapore soon",
-        reason: "Haven't properly caught up since her conference talk last week",
-      },
-    ],
-  },
-];
+function daysAgo(dateStr: string): number {
+  if (!dateStr) return 0;
+  return Math.max(0, Math.floor((Date.now() - new Date(dateStr).getTime()) / 86400000));
+}
 
 // --- Sub-components ---
 
@@ -238,13 +154,12 @@ export default function SearchPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [hasStarted, setHasStarted] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const responseIndexRef = useRef(0);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!input.trim() || isLoading) return;
     const userMsg = input.trim();
     setInput("");
@@ -252,12 +167,41 @@ export default function SearchPage() {
     setMessages((prev) => [...prev, { role: "user", text: userMsg }]);
     setIsLoading(true);
 
-    setTimeout(() => {
-      const response = hardcodedResponses[responseIndexRef.current % hardcodedResponses.length];
-      responseIndexRef.current++;
+    try {
+      const res = await fetch(`${API_BASE}/tend/search/`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: userMsg }),
+      });
+
+      if (!res.ok) throw new Error(`Server error ${res.status}`);
+      const data = await res.json();
+
+      const results: ResultPerson[] = (data.results ?? []).map(
+        (r: { contact: { id: string; name: string; notes: { text: string; date: string }[]; last_contacted_date: string }; reason: string }) => ({
+          id: r.contact.id,
+          name: r.contact.name,
+          avatarSeed: r.contact.name,
+          lastContactedDaysAgo: daysAgo(r.contact.last_contacted_date),
+          summary: r.contact.notes.at(-1)?.text ?? "",
+          reason: r.reason,
+        })
+      );
+
+      const response: AssistantMessage =
+        results.length > 0
+          ? { intro: `Found ${results.length} contact${results.length === 1 ? "" : "s"} in your network:`, results }
+          : { intro: "No contacts in your network matched that query. Try adding more notes!", results: [] };
+
       setMessages((prev) => [...prev, { role: "assistant", data: response }]);
+    } catch {
+      setMessages((prev) => [
+        ...prev,
+        { role: "assistant", data: { intro: "Something went wrong — is the backend running?", results: [] } },
+      ]);
+    } finally {
       setIsLoading(false);
-    }, 1200 + Math.random() * 800);
+    }
   };
 
   const inputBar = (
