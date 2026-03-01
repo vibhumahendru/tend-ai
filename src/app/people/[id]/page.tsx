@@ -87,7 +87,7 @@ export default async function ContactDetailPage({ params }: { params: Promise<{ 
   ];
 
   return (
-    <div className="flex gap-6 items-start">
+    <div className="flex flex-col md:flex-row gap-6 items-start">
       <div className="flex-1 min-w-0">
       {/* Back link */}
       <Link href="/people" className="inline-flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-300 transition-colors mb-6">
@@ -96,7 +96,7 @@ export default async function ContactDetailPage({ params }: { params: Promise<{ 
       </Link>
 
       {/* Header */}
-      <div className="flex items-start justify-between mb-8">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between mb-8">
         <div className="flex items-center gap-4">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={avatarUrl} alt={contact.name} width={64} height={64} className="rounded-full bg-gray-800" />
@@ -110,7 +110,7 @@ export default async function ContactDetailPage({ params }: { params: Promise<{ 
         </div>
 
         {/* Social Icons */}
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1 flex-wrap">
           {socials.map((s) => (
             <button
               key={s.label}

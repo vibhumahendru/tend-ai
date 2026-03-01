@@ -106,9 +106,9 @@ export default function PeoplePage() {
   };
 
   return (
-    <div className="flex gap-0 h-[calc(100vh-4rem)]">
-      {/* Directory Tree */}
-      <div className="w-56 shrink-0 border-r border-gray-800/50 pr-4 overflow-y-auto">
+    <div className="flex flex-col md:flex-row gap-0 md:h-[calc(100vh-4rem)]">
+      {/* Directory Tree — desktop only */}
+      <div className="hidden md:block w-56 shrink-0 border-r border-gray-800/50 pr-4 overflow-y-auto">
         <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3 px-1">
           Folders
         </h2>
@@ -146,7 +146,22 @@ export default function PeoplePage() {
       </div>
 
       {/* Contact Cards Grid */}
-      <div className="flex-1 overflow-y-auto pl-6">
+      <div className="flex-1 overflow-y-auto md:pl-6">
+        {/* Mobile folder picker */}
+        <div className="md:hidden mb-4">
+          <select
+            value={selectedFolder}
+            onChange={(e) => setSelectedFolder(e.target.value)}
+            className="w-full bg-gray-900 border border-gray-800/60 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-violet-500/50"
+          >
+            {folderStructure.map((folder) => (
+              <option key={folder.name} value={folder.name}>
+                {folder.name} ({folder.count})
+              </option>
+            ))}
+          </select>
+        </div>
+
         <div className="flex items-center justify-between mb-4">
           <h1 className="text-lg font-semibold text-gray-100">
             {selectedFolder}

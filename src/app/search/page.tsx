@@ -300,14 +300,14 @@ export default function SearchPage() {
   // Empty state
   if (!hasStarted) {
     return (
-      <div className="flex flex-col items-center justify-center h-[calc(100vh-4rem)] -mt-8 px-4">
+      <div className="flex flex-col items-center justify-center h-[calc(100vh-8rem)] md:h-[calc(100vh-4rem)] md:-mt-8 px-4">
         <div className="w-12 h-12 rounded-2xl bg-violet-500/10 border border-violet-500/20 flex items-center justify-center mb-8">
           <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-violet-400">
             <circle cx="11" cy="11" r="8" />
             <path d="M21 21l-4.35-4.35" />
           </svg>
         </div>
-        <div className="text-2xl font-light text-center h-9 mb-8">
+        <div className="text-xl sm:text-2xl font-light text-center h-9 mb-8">
           <TypingPrompt />
         </div>
         {inputBar}
@@ -317,7 +317,7 @@ export default function SearchPage() {
 
   // Conversation state
   return (
-    <div className="flex flex-col h-[calc(100vh-4rem)]">
+    <div className="flex flex-col h-[calc(100vh-8rem)] md:h-[calc(100vh-4rem)]">
       <div className="flex-1 overflow-y-auto">
         <div className="max-w-2xl mx-auto py-6 flex flex-col gap-6">
           {messages.map((msg, i) => (
@@ -355,7 +355,7 @@ export default function SearchPage() {
         </div>
       </div>
 
-      <div className="pb-6 pt-4 px-4">
+      <div className="pb-6 pt-4 px-4 mb-14 md:mb-0">
         {inputBar}
       </div>
     </div>

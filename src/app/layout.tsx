@@ -29,7 +29,7 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased bg-gray-950 text-gray-100`}
       >
         <Sidebar />
-        <main className="ml-60 min-h-screen p-8">{children}</main>
+        <main className="md:ml-60 min-h-screen p-4 pb-20 md:p-8 md:pb-8">{children}</main>
       </body>
     </html>
   );

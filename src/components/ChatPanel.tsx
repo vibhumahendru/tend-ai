@@ -89,7 +89,7 @@ export default function ChatPanel({ contactName }: ChatPanelProps) {
     return (
       <button
         onClick={() => setIsOpen(true)}
-        className="fixed right-8 bottom-8 w-12 h-12 rounded-full bg-violet-600 hover:bg-violet-500 text-white flex items-center justify-center shadow-lg shadow-violet-500/20 transition-colors"
+        className="fixed right-4 bottom-20 md:right-8 md:bottom-8 w-12 h-12 rounded-full bg-violet-600 hover:bg-violet-500 text-white flex items-center justify-center shadow-lg shadow-violet-500/20 transition-colors z-40"
         title="Open chat"
       >
         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -100,7 +100,7 @@ export default function ChatPanel({ contactName }: ChatPanelProps) {
   }
 
   return (
-    <div className="w-80 shrink-0 flex flex-col bg-gray-900 border border-gray-800/60 rounded-xl overflow-hidden h-[calc(100vh-8rem)] sticky top-8">
+    <div className="fixed inset-0 z-50 flex flex-col bg-gray-900 overflow-hidden h-full md:static md:z-auto md:w-80 md:shrink-0 md:border md:border-gray-800/60 md:rounded-xl md:h-[calc(100vh-8rem)] md:sticky md:top-8">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-800/60">
         <div className="flex items-center gap-2">

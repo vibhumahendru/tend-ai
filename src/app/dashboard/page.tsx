@@ -143,19 +143,19 @@ export default function DashboardPage() {
   return (
     <div className="max-w-5xl mx-auto">
       {/* Top bar */}
-      <div className="flex items-center justify-between mb-7">
+      <div className="flex items-start sm:items-center justify-between mb-7 gap-3">
         <div>
           <h1 className="text-lg font-semibold text-gray-100">Dashboard</h1>
           <p className="text-xs text-gray-500 mt-0.5">Sunday, 1 March 2026</p>
         </div>
         <Link
           href="/notes"
-          className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-violet-600 hover:bg-violet-500 text-white text-sm font-medium transition-colors"
+          className="flex items-center gap-2 px-3 py-2 sm:px-4 sm:py-2.5 rounded-xl bg-violet-600 hover:bg-violet-500 text-white text-sm font-medium transition-colors shrink-0"
         >
           <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
             <path d="M12 5v14M5 12h14" />
           </svg>
-          Create new note
+          <span className="hidden sm:inline">Create new note</span>
         </Link>
       </div>
 
@@ -171,7 +171,7 @@ export default function DashboardPage() {
             <p className="text-sm text-gray-300 leading-relaxed mb-5">
               {weekSummary.sentence}
             </p>
-            <div className="flex gap-6">
+            <div className="flex gap-4 sm:gap-6 flex-wrap">
               {weekSummary.stats.map((s) => (
                 <div key={s.label}>
                   <p className="text-2xl font-bold text-gray-100">{s.value}</p>

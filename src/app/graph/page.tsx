@@ -390,17 +390,61 @@ export default function GraphPage() {
     setTooltip(null);
   }, []);
 
+  // Touch handlers for mobile
+  const handleTouchStart = useCallback((e: React.TouchEvent) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const touch = e.touches[0];
+    const x = touch.clientX - rect.left;
+    const y = touch.clientY - rect.top;
+    mouseRef.current = { x, y, prevX: x, prevY: y, speed: 0 };
+
+    for (const node of nodesRef.current) {
+      const dx = x - node.x;
+      const dy = y - node.y;
+      if (Math.sqrt(dx * dx + dy * dy) <= node.radius + 12) {
+        e.preventDefault();
+        setTooltip({ contact: node.contact, x: node.x, y: node.y });
+        hoveredNodeRef.current = node;
+        return;
+      }
+    }
+    setTooltip(null);
+    hoveredNodeRef.current = null;
+  }, []);
+
+  const handleTouchMove = useCallback((e: React.TouchEvent) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const touch = e.touches[0];
+    const x = touch.clientX - rect.left;
+    const y = touch.clientY - rect.top;
+    const prev = mouseRef.current;
+    const speed = Math.sqrt((x - prev.x) ** 2 + (y - prev.y) ** 2);
+    mouseRef.current = { x, y, prevX: prev.x, prevY: prev.y, speed };
+  }, []);
+
+  const handleTouchEnd = useCallback(() => {
+    mouseRef.current = { x: -9999, y: -9999, prevX: -9999, prevY: -9999, speed: 0 };
+    hoveredNodeRef.current = null;
+  }, []);
+
   return (
-    <div className="h-[calc(100vh-4rem)] flex flex-col">
-      <div className="flex items-center justify-between mb-4">
+    <div className="h-[calc(100vh-8rem)] md:h-[calc(100vh-4rem)] flex flex-col">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between mb-4">
         <div>
           <h1 className="text-lg font-semibold text-gray-100">Graph View</h1>
-          <p className="text-xs text-gray-500">
+          <p className="text-xs text-gray-500 hidden sm:block">
             Hover to interact. Click a bubble to see details. Center = recently contacted. Edges = drifting.
+          </p>
+          <p className="text-xs text-gray-500 sm:hidden">
+            Tap a bubble to see details.
           </p>
         </div>
         {/* Legend */}
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
           {[
             { color: "#22c55e", label: "< 7d" },
             { color: "#facc15", label: "< 30d" },
@@ -421,7 +465,10 @@ export default function GraphPage() {
           onMouseMove={handleMouseMove}
           onMouseLeave={handleMouseLeave}
           onClick={handleClick}
-          className="w-full h-full cursor-crosshair"
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
+          className="w-full h-full cursor-crosshair touch-manipulation"
         />
 
         {/* Tooltip */}
@@ -429,7 +476,9 @@ export default function GraphPage() {
           <div
             className="absolute z-10 pointer-events-auto"
             style={{
-              left: Math.min(tooltip.x + 12, dimensions.w - 260),
+              left: dimensions.w < 500
+                ? Math.max(8, Math.min(tooltip.x - 120, dimensions.w - 248))
+                : Math.min(tooltip.x + 12, dimensions.w - 260),
               top: Math.max(tooltip.y - 20, 8),
             }}
           >
