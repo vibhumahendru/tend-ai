@@ -60,7 +60,7 @@ interface ChatPanelProps {
 }
 
 export default function ChatPanel({ contactName }: ChatPanelProps) {
-  const [isOpen, setIsOpen] = useState(true);
+  const [isOpen, setIsOpen] = useState(false);
   const [selectedChannel, setSelectedChannel] = useState("whatsapp");
   const [message, setMessage] = useState("");
   const [sentMessages, setSentMessages] = useState<
