@@ -101,7 +101,31 @@ function LastContactedChip({ days }: { days: number }) {
   );
 }
 
-function ContactCard({ contact }: { contact: DisplayContact }) {
+function XIcon() {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M18 6 6 18" /><path d="m6 6 12 12" />
+    </svg>
+  );
+}
+
+function SpinnerIcon() {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="animate-spin">
+      <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+    </svg>
+  );
+}
+
+function ContactCard({
+  contact,
+  onDelete,
+  isDeleting,
+}: {
+  contact: DisplayContact;
+  onDelete: (id: string, e: React.MouseEvent) => void;
+  isDeleting: boolean;
+}) {
   const avatarUrl = `https://api.dicebear.com/9.x/avataaars/svg?seed=${encodeURIComponent(contact.avatarSeed)}`;
 
   return (
@@ -116,10 +140,18 @@ function ContactCard({ contact }: { contact: DisplayContact }) {
           className="rounded-full bg-gray-800 shrink-0"
         />
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2 mb-1">
+          <div className="flex items-center justify-between gap-2 mb-1">
             <span className="text-sm font-medium text-gray-100 truncate">
               {contact.name}
             </span>
+            {/* Delete button — hidden until card hover */}
+            <button
+              onClick={(e) => onDelete(contact.id, e)}
+              className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded-md hover:bg-red-500/15 text-gray-600 hover:text-red-400 shrink-0"
+              title="Remove contact"
+            >
+              {isDeleting ? <SpinnerIcon /> : <XIcon />}
+            </button>
           </div>
           <LastContactedChip days={contact.lastContactedDaysAgo} />
           <p className="text-xs text-gray-500 mt-2 line-clamp-2">
@@ -141,6 +173,7 @@ export default function PeoplePage() {
   const [contacts, setContacts] = useState<DisplayContact[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   useEffect(() => {
     fetch(`${API_BASE}/tend/contacts/`)
@@ -155,6 +188,19 @@ export default function PeoplePage() {
         setIsLoading(false);
       });
   }, []);
+
+  const handleDelete = async (id: string, e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDeletingId(id);
+    try {
+      await fetch(`${API_BASE}/tend/contacts/${id}/`, { method: "DELETE" });
+    } catch {
+      // best-effort — remove from UI regardless
+    }
+    setContacts((prev) => prev.filter((c) => c.id !== id));
+    setDeletingId(null);
+  };
 
   // Only "All" folder is active for real contacts
   const filteredContacts = contacts
@@ -286,7 +332,12 @@ export default function PeoplePage() {
         {!isLoading && !fetchError && filteredContacts.length > 0 && (
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
             {filteredContacts.map((contact) => (
-              <ContactCard key={contact.id} contact={contact} />
+              <ContactCard
+                key={contact.id}
+                contact={contact}
+                onDelete={handleDelete}
+                isDeleting={deletingId === contact.id}
+              />
             ))}
           </div>
         )}

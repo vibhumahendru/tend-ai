@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { getContactById } from "@/lib/dummy-contacts";
 import Link from "next/link";
 import ChatPanel from "@/components/ChatPanel";
@@ -68,6 +68,16 @@ function BackArrowIcon() {
   );
 }
 
+function TrashIcon() {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 6h18" />
+      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+      <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+    </svg>
+  );
+}
+
 // --- Unified display type ---
 
 interface ProfileNote {
@@ -130,11 +140,21 @@ function mapBackendContact(c: {
 
 export default function ContactDetailPage() {
   const params = useParams();
+  const router = useRouter();
   const id = typeof params.id === "string" ? params.id : "";
 
   const [contact, setContact] = useState<ProfileContact | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [missing, setMissing] = useState(false);
+
+  const handleDelete = async () => {
+    try {
+      await fetch(`${API_BASE}/tend/contacts/${id}/`, { method: "DELETE" });
+    } catch {
+      // best-effort
+    }
+    router.push("/people");
+  };
 
   useEffect(() => {
     if (!id) return;
@@ -243,20 +263,25 @@ export default function ContactDetailPage() {
             </div>
           </div>
 
-          {/* Social Icons — only render if at least one is set */}
-          {hasSocials && (
-            <div className="flex items-center gap-1 flex-wrap">
-              {socials.map((s) => s.value ? (
-                <button
-                  key={s.label}
-                  title={`${s.label}: ${s.value}`}
-                  className="p-2.5 rounded-lg hover:bg-gray-800/60 transition-colors"
-                >
-                  {s.icon}
-                </button>
-              ) : null)}
-            </div>
-          )}
+          {/* Action icons — socials + trash */}
+          <div className="flex items-center gap-1 flex-wrap">
+            {hasSocials && socials.map((s) => s.value ? (
+              <button
+                key={s.label}
+                title={`${s.label}: ${s.value}`}
+                className="p-2.5 rounded-lg hover:bg-gray-800/60 transition-colors"
+              >
+                {s.icon}
+              </button>
+            ) : null)}
+            <button
+              onClick={handleDelete}
+              className="p-2.5 rounded-lg hover:bg-red-500/10 text-gray-600 hover:text-red-400 transition-colors"
+              title="Delete contact"
+            >
+              <TrashIcon />
+            </button>
+          </div>
         </div>
 
         {/* Summary */}
