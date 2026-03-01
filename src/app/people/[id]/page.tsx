@@ -1,7 +1,13 @@
-import { getContactById, contacts } from "@/lib/dummy-contacts";
-import { notFound } from "next/navigation";
+"use client";
+
+import { useEffect, useState } from "react";
+import { useParams } from "next/navigation";
+import { getContactById } from "@/lib/dummy-contacts";
 import Link from "next/link";
 import ChatPanel from "@/components/ChatPanel";
+import { API_BASE } from "@/lib/api";
+
+// --- Icons ---
 
 function InstagramIcon() {
   return (
@@ -62,21 +68,147 @@ function BackArrowIcon() {
   );
 }
 
-export function generateStaticParams() {
-  return contacts.map((c) => ({ id: c.id }));
+// --- Unified display type ---
+
+interface ProfileNote {
+  date: string;
+  text: string;
 }
 
-export default async function ContactDetailPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
-  const contact = getContactById(id);
-  if (!contact) notFound();
+interface ProfileContact {
+  id: string;
+  name: string;
+  avatarSeed: string;
+  lastContactedDaysAgo: number;
+  summary: string;
+  tags: string[];
+  topicClusters: string[];
+  suggestedOutreach: string[];
+  notes: ProfileNote[];
+  socials: {
+    instagram?: string;
+    linkedin?: string;
+    phone?: string;
+    email?: string;
+    whatsapp?: string;
+  };
+}
+
+function daysAgo(dateStr: string): number {
+  if (!dateStr) return 0;
+  return Math.max(0, Math.floor((Date.now() - new Date(dateStr).getTime()) / 86400000));
+}
+
+// Map a raw backend contact to the unified display shape
+function mapBackendContact(c: {
+  id: string;
+  name: string;
+  tags: string[];
+  notes: { text: string; date: string; energy_level: string | null }[];
+  last_contacted_date: string;
+  created_at: string;
+}): ProfileContact {
+  const latestNote = c.notes.at(-1);
+  return {
+    id: c.id,
+    name: c.name,
+    avatarSeed: c.name,
+    lastContactedDaysAgo: daysAgo(c.last_contacted_date),
+    summary: latestNote?.text ?? "No notes yet.",
+    tags: c.tags,
+    topicClusters: c.tags, // use tags as topic clusters fallback
+    suggestedOutreach: [
+      `Send ${c.name.split(" ")[0]} a message to catch up`,
+      `Share something relevant to ${c.tags[0] ?? "their interests"}`,
+    ],
+    notes: c.notes.map((n) => ({ date: n.date, text: n.text })),
+    socials: {},
+  };
+}
+
+// --- Page ---
+
+export default function ContactDetailPage() {
+  const params = useParams();
+  const id = typeof params.id === "string" ? params.id : "";
+
+  const [contact, setContact] = useState<ProfileContact | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [missing, setMissing] = useState(false);
+
+  useEffect(() => {
+    if (!id) return;
+
+    // 1. Try dummy contacts first (legacy IDs like contact-1)
+    const dummy = getContactById(id);
+    if (dummy) {
+      setContact({
+        id: dummy.id,
+        name: dummy.name,
+        avatarSeed: dummy.avatarSeed,
+        lastContactedDaysAgo: dummy.lastContactedDaysAgo,
+        summary: dummy.summary,
+        tags: dummy.tags,
+        topicClusters: dummy.topicClusters,
+        suggestedOutreach: dummy.suggestedOutreach,
+        notes: dummy.notes,
+        socials: dummy.socials,
+      });
+      setIsLoading(false);
+      return;
+    }
+
+    // 2. Fetch from real backend
+    fetch(`${API_BASE}/tend/contacts/`)
+      .then((r) => r.json())
+      .then((data) => {
+        const found = (data.contacts ?? []).find(
+          (c: { id: string }) => c.id === id
+        );
+        if (found) {
+          setContact(mapBackendContact(found));
+        } else {
+          setMissing(true);
+        }
+      })
+      .catch(() => setMissing(true))
+      .finally(() => setIsLoading(false));
+  }, [id]);
+
+  // Loading skeleton
+  if (isLoading) {
+    return (
+      <div className="flex flex-col gap-6 animate-pulse">
+        <div className="h-4 w-24 bg-gray-800 rounded" />
+        <div className="flex items-center gap-4">
+          <div className="w-16 h-16 rounded-full bg-gray-800" />
+          <div className="space-y-2">
+            <div className="h-5 w-40 bg-gray-800 rounded" />
+            <div className="h-3 w-56 bg-gray-800 rounded" />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Not found
+  if (missing || !contact) {
+    return (
+      <div className="flex flex-col items-center justify-center py-24 text-center">
+        <p className="text-sm text-gray-400 mb-4">Contact not found.</p>
+        <Link href="/people" className="text-violet-400 text-sm hover:text-violet-300 transition-colors">
+          ← Back to My People
+        </Link>
+      </div>
+    );
+  }
 
   const avatarUrl = `https://api.dicebear.com/9.x/avataaars/svg?seed=${encodeURIComponent(contact.avatarSeed)}`;
 
-  const recentNotes = contact.notes.slice(0, 3);
-  const summaryText = recentNotes.length > 0
-    ? `Your last ${recentNotes.length} interactions covered topics like ${contact.topicClusters.slice(0, 2).join(" and ").toLowerCase()}. ${recentNotes[0].text.split(".").slice(0, 2).join(".") + "."}`
-    : "No interactions logged yet.";
+  const summaryText =
+    contact.notes.length > 0
+      ? contact.notes[0].text
+      : contact.summary;
 
   const socials = [
     { icon: <InstagramIcon />, label: "Instagram", value: contact.socials.instagram },
@@ -86,113 +218,125 @@ export default async function ContactDetailPage({ params }: { params: Promise<{ 
     { icon: <WhatsAppIcon />, label: "WhatsApp", value: contact.socials.whatsapp },
   ];
 
+  const hasSocials = socials.some((s) => s.value);
+
   return (
     <div className="flex flex-col md:flex-row gap-6 items-start">
       <div className="flex-1 min-w-0">
-      {/* Back link */}
-      <Link href="/people" className="inline-flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-300 transition-colors mb-6">
-        <BackArrowIcon />
-        Back to My People
-      </Link>
+        {/* Back link */}
+        <Link href="/people" className="inline-flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-300 transition-colors mb-6">
+          <BackArrowIcon />
+          Back to My People
+        </Link>
 
-      {/* Header */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between mb-8">
-        <div className="flex items-center gap-4">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={avatarUrl} alt={contact.name} width={64} height={64} className="rounded-full bg-gray-800" />
-          <div>
-            <h1 className="text-2xl font-semibold text-gray-100">{contact.name}</h1>
-            <p className="text-sm text-gray-500 mt-0.5">{contact.summary}</p>
-            <p className="text-xs text-gray-600 mt-1">
-              Last contacted {contact.lastContactedDaysAgo === 1 ? "1 day" : `${contact.lastContactedDaysAgo} days`} ago
-            </p>
-          </div>
-        </div>
-
-        {/* Social Icons */}
-        <div className="flex items-center gap-1 flex-wrap">
-          {socials.map((s) => (
-            <button
-              key={s.label}
-              title={`${s.label}: ${s.value}`}
-              className="p-2.5 rounded-lg hover:bg-gray-800/60 transition-colors"
-            >
-              {s.icon}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Summary */}
-      <section className="mb-8">
-        <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">Summary</h2>
-        <div className="bg-gray-900 border border-gray-800/60 rounded-xl p-4">
-          <p className="text-sm text-gray-300 leading-relaxed">{summaryText}</p>
-        </div>
-      </section>
-
-      {/* Tags */}
-      <section className="mb-8">
-        <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">Tags</h2>
-        <div className="flex flex-wrap gap-2">
-          {contact.tags.map((tag) => (
-            <span key={tag} className="px-3 py-1 rounded-full bg-violet-500/10 text-violet-400 text-xs font-medium">
-              {tag}
-            </span>
-          ))}
-        </div>
-      </section>
-
-      {/* Topic Clusters */}
-      <section className="mb-8">
-        <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">Topic Clusters</h2>
-        <div className="flex flex-wrap gap-2">
-          {contact.topicClusters.map((topic) => (
-            <span key={topic} className="px-3 py-1.5 rounded-lg bg-gray-800/80 text-gray-300 text-xs font-medium border border-gray-700/50">
-              {topic}
-            </span>
-          ))}
-        </div>
-      </section>
-
-      {/* Suggested Outreach */}
-      <section className="mb-8">
-        <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">Suggested Outreach</h2>
-        <div className="flex flex-col gap-2">
-          {contact.suggestedOutreach.map((suggestion) => (
-            <button
-              key={suggestion}
-              className="flex items-center gap-3 px-4 py-3 rounded-xl bg-gray-900 border border-gray-800/60 hover:border-violet-500/30 transition-colors text-left group"
-            >
-              <span className="w-8 h-8 rounded-full bg-violet-500/10 flex items-center justify-center shrink-0 group-hover:bg-violet-500/20 transition-colors">
-                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-violet-400">
-                  <path d="M5 12h14" /><path d="m12 5 7 7-7 7" />
-                </svg>
-              </span>
-              <span className="text-sm text-gray-300">{suggestion}</span>
-            </button>
-          ))}
-        </div>
-      </section>
-
-      {/* Past Mentions / Notes */}
-      <section className="mb-8">
-        <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">
-          Past Mentions
-          <span className="text-gray-600 font-normal ml-2">{contact.notes.length} notes</span>
-        </h2>
-        <div className="flex flex-col gap-3">
-          {contact.notes.map((note, i) => (
-            <div key={i} className="bg-gray-900 border border-gray-800/60 rounded-xl p-4">
-              <p className="text-[11px] text-gray-600 mb-2 font-medium">{note.date}</p>
-              <p className="text-sm text-gray-300 leading-relaxed">{note.text}</p>
+        {/* Header */}
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between mb-8">
+          <div className="flex items-center gap-4">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={avatarUrl} alt={contact.name} width={64} height={64} className="rounded-full bg-gray-800" />
+            <div>
+              <h1 className="text-2xl font-semibold text-gray-100">{contact.name}</h1>
+              <p className="text-sm text-gray-500 mt-0.5">{contact.summary}</p>
+              <p className="text-xs text-gray-600 mt-1">
+                Last contacted {contact.lastContactedDaysAgo === 0 ? "today" : contact.lastContactedDaysAgo === 1 ? "1 day ago" : `${contact.lastContactedDaysAgo} days ago`}
+              </p>
             </div>
-          ))}
+          </div>
+
+          {/* Social Icons — only render if at least one is set */}
+          {hasSocials && (
+            <div className="flex items-center gap-1 flex-wrap">
+              {socials.map((s) => s.value ? (
+                <button
+                  key={s.label}
+                  title={`${s.label}: ${s.value}`}
+                  className="p-2.5 rounded-lg hover:bg-gray-800/60 transition-colors"
+                >
+                  {s.icon}
+                </button>
+              ) : null)}
+            </div>
+          )}
         </div>
-      </section>
+
+        {/* Summary */}
+        <section className="mb-8">
+          <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">Summary</h2>
+          <div className="bg-gray-900 border border-gray-800/60 rounded-xl p-4">
+            <p className="text-sm text-gray-300 leading-relaxed">{summaryText}</p>
+          </div>
+        </section>
+
+        {/* Tags */}
+        {contact.tags.length > 0 && (
+          <section className="mb-8">
+            <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">Tags</h2>
+            <div className="flex flex-wrap gap-2">
+              {contact.tags.map((tag) => (
+                <span key={tag} className="px-3 py-1 rounded-full bg-violet-500/10 text-violet-400 text-xs font-medium">
+                  {tag}
+                </span>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* Topic Clusters */}
+        {contact.topicClusters.length > 0 && (
+          <section className="mb-8">
+            <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">Topic Clusters</h2>
+            <div className="flex flex-wrap gap-2">
+              {contact.topicClusters.map((topic) => (
+                <span key={topic} className="px-3 py-1.5 rounded-lg bg-gray-800/80 text-gray-300 text-xs font-medium border border-gray-700/50">
+                  {topic}
+                </span>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* Suggested Outreach */}
+        {contact.suggestedOutreach.length > 0 && (
+          <section className="mb-8">
+            <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">Suggested Outreach</h2>
+            <div className="flex flex-col gap-2">
+              {contact.suggestedOutreach.map((suggestion) => (
+                <button
+                  key={suggestion}
+                  className="flex items-center gap-3 px-4 py-3 rounded-xl bg-gray-900 border border-gray-800/60 hover:border-violet-500/30 transition-colors text-left group"
+                >
+                  <span className="w-8 h-8 rounded-full bg-violet-500/10 flex items-center justify-center shrink-0 group-hover:bg-violet-500/20 transition-colors">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-violet-400">
+                      <path d="M5 12h14" /><path d="m12 5 7 7-7 7" />
+                    </svg>
+                  </span>
+                  <span className="text-sm text-gray-300">{suggestion}</span>
+                </button>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* Past Notes */}
+        {contact.notes.length > 0 && (
+          <section className="mb-8">
+            <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">
+              Past Mentions
+              <span className="text-gray-600 font-normal ml-2">{contact.notes.length} notes</span>
+            </h2>
+            <div className="flex flex-col gap-3">
+              {contact.notes.map((note, i) => (
+                <div key={i} className="bg-gray-900 border border-gray-800/60 rounded-xl p-4">
+                  <p className="text-[11px] text-gray-600 mb-2 font-medium">{note.date}</p>
+                  <p className="text-sm text-gray-300 leading-relaxed">{note.text}</p>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
       </div>
 
-      {/* Chat Panel - right side */}
+      {/* Chat Panel */}
       <ChatPanel contactName={contact.name} />
     </div>
   );
