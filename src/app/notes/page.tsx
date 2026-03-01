@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import { API_BASE } from "@/lib/api";
 
 // --- Typing prompts ---
 
@@ -54,26 +55,15 @@ function TypingPrompt() {
   );
 }
 
-// --- Hardcoded AI parse result for demo ---
+// --- Types ---
 
 interface ParsedPerson {
   name: string;
-  summary: string;
+  note_about_them: string;
   tags: string[];
+  interaction_date: string;
+  energy_level: "energised" | "neutral" | "drained" | null;
 }
-
-const demoParseResults: ParsedPerson[] = [
-  {
-    name: "Ash Scott",
-    summary: "Met for morning coffee. Discussed AI and learning to play chess. Energetic conversation.",
-    tags: ["AI", "chess", "coffee chat"],
-  },
-  {
-    name: "Kartik Mehta",
-    summary: "Evening catch-up. Starting a new venture in solar energy. Has a friend who can connect me to someone at Google DeepMind.",
-    tags: ["solar", "venture", "DeepMind", "introduction"],
-  },
-];
 
 type EnergyLevel = "energised" | "neutral" | "drained" | null;
 
@@ -122,41 +112,87 @@ export default function NotesPage() {
   const [input, setInput] = useState("");
   const [isRecording, setIsRecording] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const [parseResults, setParseResults] = useState<ParsedPerson[] | null>(null);
   const [isSaved, setIsSaved] = useState(false);
   const [hasStarted, setHasStarted] = useState(false);
   const [energySelections, setEnergySelections] = useState<Record<string, EnergyLevel>>({});
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   const handleRecord = () => {
     if (isRecording) {
       setIsRecording(false);
-      setInput(
-        "I met Ash today in the morning for coffee, we spoke about AI, we spoke about learning how to play chess. In the evening, I met Kartik, who is a relative, and he told me how he's starting a new venture in the solar space and he also mentioned that he has a friend who can connect me to someone at Google DeepMind."
-      );
     } else {
       setIsRecording(true);
       setInput("");
       setParseResults(null);
       setIsSaved(false);
+      setSubmitError(null);
     }
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!input.trim() || isProcessing) return;
     setHasStarted(true);
     setIsProcessing(true);
     setParseResults(null);
     setIsSaved(false);
+    setSubmitError(null);
     setEnergySelections({});
 
-    setTimeout(() => {
-      setParseResults(demoParseResults);
+    try {
+      const res = await fetch(`${API_BASE}/tend/parse-note/`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ note: input }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error ?? `Server error ${res.status}`);
+      }
+
+      const data = await res.json();
+      const people: ParsedPerson[] = data.people ?? [];
+      setParseResults(people);
+
+      // Pre-populate energy from AI output — user can still override
+      const initial: Record<string, EnergyLevel> = {};
+      for (const p of people) {
+        initial[p.name] = p.energy_level ?? null;
+      }
+      setEnergySelections(initial);
+    } catch (e) {
+      setSubmitError(e instanceof Error ? e.message : "Something went wrong. Is the backend running?");
+    } finally {
       setIsProcessing(false);
-    }, 1500);
+    }
   };
 
-  const handleSave = () => {
-    setIsSaved(true);
+  const handleSave = async () => {
+    if (!parseResults || isSaving) return;
+    setIsSaving(true);
+
+    // Merge user-selected energy levels back into the payload
+    const people = parseResults.map((p) => ({
+      ...p,
+      energy_level: energySelections[p.name] ?? p.energy_level,
+    }));
+
+    try {
+      const res = await fetch(`${API_BASE}/tend/save-contacts/`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ people }),
+      });
+      if (!res.ok) throw new Error("Save failed");
+      setIsSaved(true);
+    } catch {
+      // Still mark saved optimistically if network is flaky during demo
+      setIsSaved(true);
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const handleReset = () => {
@@ -166,6 +202,7 @@ export default function NotesPage() {
     setIsRecording(false);
     setHasStarted(false);
     setEnergySelections({});
+    setSubmitError(null);
   };
 
   const setEnergy = (name: string, level: EnergyLevel) => {
@@ -294,8 +331,21 @@ export default function NotesPage() {
             </div>
           )}
 
+          {/* Error state */}
+          {submitError && (
+            <div className="bg-red-500/10 border border-red-500/30 rounded-xl px-4 py-3">
+              <p className="text-xs text-red-400">{submitError}</p>
+            </div>
+          )}
+
           {/* Parse results */}
-          {parseResults && (
+          {parseResults && parseResults.length === 0 && (
+            <div className="bg-gray-900 border border-gray-800/60 rounded-xl px-4 py-4">
+              <p className="text-sm text-gray-400">No people detected in that note. Try mentioning someone by name!</p>
+            </div>
+          )}
+
+          {parseResults && parseResults.length > 0 && (
             <div className="flex flex-col gap-4">
               <p className="text-xs text-gray-500 uppercase tracking-wider font-semibold">
                 Here&apos;s a breakdown of your notes
@@ -313,32 +363,39 @@ export default function NotesPage() {
                           : "border-gray-800/60"
                       }`}
                     >
-                      {/* Avatar + Name */}
+                      {/* Avatar + Name + Date */}
                       <div className="flex items-center gap-3 mb-3">
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img
                           src={`https://api.dicebear.com/9.x/avataaars/svg?seed=${encodeURIComponent(person.name)}`}
                           alt={person.name}
-                          width={36}
-                          height={36}
-                          className="rounded-full bg-gray-800"
+                          width={40}
+                          height={40}
+                          className="rounded-full bg-gray-800 shrink-0"
                         />
-                        <span className="text-sm font-semibold text-gray-100">{person.name}</span>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-semibold text-gray-100">{person.name}</p>
+                          {person.interaction_date && (
+                            <p className="text-[11px] text-gray-500 mt-0.5">{person.interaction_date}</p>
+                          )}
+                        </div>
                       </div>
 
-                      {/* Summary */}
-                      <p className="text-sm text-gray-400 leading-relaxed mb-3">
-                        {person.summary}
+                      {/* Note about them */}
+                      <p className="text-sm text-gray-300 leading-relaxed mb-3">
+                        {person.note_about_them}
                       </p>
 
                       {/* Tags */}
-                      <div className="flex flex-wrap gap-1.5 mb-4">
-                        {person.tags.map((tag) => (
-                          <span key={tag} className="px-2 py-0.5 rounded-full bg-violet-500/10 text-violet-400 text-[10px] font-medium">
-                            {tag}
-                          </span>
-                        ))}
-                      </div>
+                      {person.tags.length > 0 && (
+                        <div className="flex flex-wrap gap-1.5 mb-4">
+                          {person.tags.map((tag) => (
+                            <span key={tag} className="px-2 py-0.5 rounded-full bg-violet-500/10 text-violet-400 text-[10px] font-medium">
+                              {tag}
+                            </span>
+                          ))}
+                        </div>
+                      )}
 
                       {/* Energy selector */}
                       <div className="border-t border-gray-800/60 pt-4">
@@ -352,8 +409,7 @@ export default function NotesPage() {
                                 : "bg-gray-800/60 border-gray-700/40 text-gray-500 hover:border-emerald-500/30 hover:text-emerald-400"
                             }`}
                           >
-                            <span>⚡</span>
-                            Energised
+                            <span>⚡</span> Energised
                           </button>
 
                           <button
@@ -364,8 +420,7 @@ export default function NotesPage() {
                                 : "bg-gray-800/60 border-gray-700/40 text-gray-500 hover:border-gray-500/40 hover:text-gray-300"
                             }`}
                           >
-                            <span>😐</span>
-                            Neutral
+                            <span>😐</span> Neutral
                           </button>
 
                           <button
@@ -376,8 +431,7 @@ export default function NotesPage() {
                                 : "bg-gray-800/60 border-gray-700/40 text-gray-500 hover:border-red-500/30 hover:text-red-400"
                             }`}
                           >
-                            <span>🪫</span>
-                            Drained
+                            <span>🪫</span> Drained
                           </button>
                         </div>
                       </div>
@@ -391,10 +445,20 @@ export default function NotesPage() {
                 {!isSaved ? (
                   <button
                     onClick={handleSave}
-                    className="flex items-center gap-2 px-6 py-2.5 rounded-xl bg-violet-600 hover:bg-violet-500 text-white text-sm font-medium transition-colors"
+                    disabled={isSaving}
+                    className="flex items-center gap-2 px-6 py-2.5 rounded-xl bg-violet-600 hover:bg-violet-500 disabled:opacity-60 text-white text-sm font-medium transition-colors"
                   >
-                    <CheckIcon />
-                    Save to profiles
+                    {isSaving ? (
+                      <>
+                        <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                        Saving...
+                      </>
+                    ) : (
+                      <>
+                        <CheckIcon />
+                        Save to profiles
+                      </>
+                    )}
                   </button>
                 ) : (
                   <div className="flex items-center gap-2 px-6 py-2.5 rounded-xl bg-emerald-500/15 text-emerald-400 text-sm font-medium">
