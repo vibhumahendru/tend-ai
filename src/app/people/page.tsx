@@ -2,8 +2,10 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { folderStructure } from "@/lib/dummy-contacts";
-import { API_BASE } from "@/lib/api";
+import { API_BASE, authedFetch } from "@/lib/api";
+import { useAuth } from "@/components/AuthProvider";
 
 // --- Backend types ---
 
@@ -166,6 +168,13 @@ function ContactCard({
 // --- Page ---
 
 export default function PeoplePage() {
+  const { session, loading: authLoading } = useAuth();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (!authLoading && !session) router.push("/login");
+  }, [authLoading, session, router]);
+
   const [selectedFolder, setSelectedFolder] = useState("All");
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(
     new Set(["All"])
@@ -176,7 +185,8 @@ export default function PeoplePage() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch(`${API_BASE}/tend/contacts/`)
+    if (!session) return;
+    authedFetch(`${API_BASE}/tend/contacts/`, {}, session.access_token)
       .then((r) => r.json())
       .then((data) => {
         const mapped = (data.contacts ?? []).map(mapContact);
@@ -187,20 +197,23 @@ export default function PeoplePage() {
         setFetchError("Could not load contacts. Is the backend running?");
         setIsLoading(false);
       });
-  }, []);
+  }, [session]);
 
   const handleDelete = async (id: string, e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
+    if (!session) return;
     setDeletingId(id);
     try {
-      await fetch(`${API_BASE}/tend/contacts/${id}/`, { method: "DELETE" });
+      await authedFetch(`${API_BASE}/tend/contacts/${id}/`, { method: "DELETE" }, session.access_token);
     } catch {
       // best-effort — remove from UI regardless
     }
     setContacts((prev) => prev.filter((c) => c.id !== id));
     setDeletingId(null);
   };
+
+  if (authLoading || !session) return null;
 
   // Only "All" folder is active for real contacts
   const filteredContacts = contacts

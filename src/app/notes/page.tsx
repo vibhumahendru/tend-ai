@@ -1,7 +1,9 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { API_BASE } from "@/lib/api";
+import { useRouter } from "next/navigation";
+import { API_BASE, authedFetch } from "@/lib/api";
+import { useAuth } from "@/components/AuthProvider";
 
 // --- Typing prompts ---
 
@@ -109,6 +111,13 @@ function CheckIcon() {
 // --- Component ---
 
 export default function NotesPage() {
+  const { session, loading } = useAuth();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (!loading && !session) router.push("/login");
+  }, [loading, session, router]);
+
   const [input, setInput] = useState("");
   const [isRecording, setIsRecording] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -118,6 +127,8 @@ export default function NotesPage() {
   const [hasStarted, setHasStarted] = useState(false);
   const [energySelections, setEnergySelections] = useState<Record<string, EnergyLevel>>({});
   const [submitError, setSubmitError] = useState<string | null>(null);
+
+  if (loading || !session) return null;
 
   const handleRecord = () => {
     if (isRecording) {
@@ -141,11 +152,11 @@ export default function NotesPage() {
     setEnergySelections({});
 
     try {
-      const res = await fetch(`${API_BASE}/tend/parse-note/`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ note: input }),
-      });
+      const res = await authedFetch(
+        `${API_BASE}/tend/parse-note/`,
+        { method: "POST", body: JSON.stringify({ note: input }) },
+        session.access_token
+      );
 
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
@@ -180,11 +191,11 @@ export default function NotesPage() {
     }));
 
     try {
-      const res = await fetch(`${API_BASE}/tend/save-contacts/`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ people }),
-      });
+      const res = await authedFetch(
+        `${API_BASE}/tend/save-contacts/`,
+        { method: "POST", body: JSON.stringify({ people }) },
+        session.access_token
+      );
       if (!res.ok) throw new Error("Save failed");
       setIsSaved(true);
     } catch {

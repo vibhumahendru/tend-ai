@@ -5,7 +5,8 @@ import { useParams, useRouter } from "next/navigation";
 import { getContactById } from "@/lib/dummy-contacts";
 import Link from "next/link";
 import ChatPanel from "@/components/ChatPanel";
-import { API_BASE } from "@/lib/api";
+import { API_BASE, authedFetch } from "@/lib/api";
+import { useAuth } from "@/components/AuthProvider";
 
 // --- Icons ---
 
@@ -139,17 +140,23 @@ function mapBackendContact(c: {
 // --- Page ---
 
 export default function ContactDetailPage() {
+  const { session, loading: authLoading } = useAuth();
   const params = useParams();
   const router = useRouter();
   const id = typeof params.id === "string" ? params.id : "";
+
+  useEffect(() => {
+    if (!authLoading && !session) router.push("/login");
+  }, [authLoading, session, router]);
 
   const [contact, setContact] = useState<ProfileContact | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [missing, setMissing] = useState(false);
 
   const handleDelete = async () => {
+    if (!session) return;
     try {
-      await fetch(`${API_BASE}/tend/contacts/${id}/`, { method: "DELETE" });
+      await authedFetch(`${API_BASE}/tend/contacts/${id}/`, { method: "DELETE" }, session.access_token);
     } catch {
       // best-effort
     }
@@ -157,7 +164,7 @@ export default function ContactDetailPage() {
   };
 
   useEffect(() => {
-    if (!id) return;
+    if (!id || !session) return;
 
     // 1. Try dummy contacts first (legacy IDs like contact-1)
     const dummy = getContactById(id);
@@ -179,7 +186,7 @@ export default function ContactDetailPage() {
     }
 
     // 2. Fetch from real backend
-    fetch(`${API_BASE}/tend/contacts/`)
+    authedFetch(`${API_BASE}/tend/contacts/`, {}, session.access_token)
       .then((r) => r.json())
       .then((data) => {
         const found = (data.contacts ?? []).find(
@@ -193,7 +200,9 @@ export default function ContactDetailPage() {
       })
       .catch(() => setMissing(true))
       .finally(() => setIsLoading(false));
-  }, [id]);
+  }, [id, session]);
+
+  if (authLoading || !session) return null;
 
   // Loading skeleton
   if (isLoading) {

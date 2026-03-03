@@ -2,7 +2,9 @@
 
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
-import { API_BASE } from "@/lib/api";
+import { useRouter } from "next/navigation";
+import { API_BASE, authedFetch } from "@/lib/api";
+import { useAuth } from "@/components/AuthProvider";
 
 const prompts = [
   "Who do I know who plays padel?",
@@ -149,11 +151,20 @@ type Message =
   | { role: "assistant"; data: AssistantMessage };
 
 export default function SearchPage() {
+  const { session, loading: authLoading } = useAuth();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (!authLoading && !session) router.push("/login");
+  }, [authLoading, session, router]);
+
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [hasStarted, setHasStarted] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  if (authLoading || !session) return null;
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -168,11 +179,11 @@ export default function SearchPage() {
     setIsLoading(true);
 
     try {
-      const res = await fetch(`${API_BASE}/tend/search/`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: userMsg }),
-      });
+      const res = await authedFetch(
+        `${API_BASE}/tend/search/`,
+        { method: "POST", body: JSON.stringify({ query: userMsg }) },
+        session!.access_token,
+      );
 
       if (!res.ok) throw new Error(`Server error ${res.status}`);
       const data = await res.json();
