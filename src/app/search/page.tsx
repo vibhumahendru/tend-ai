@@ -231,9 +231,12 @@ export default function SearchPage() {
         const mimeType =
           MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? "audio/webm;codecs=opus" :
           MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" :
-          MediaRecorder.isTypeSupported("audio/mp4") ? "audio/mp4" : "";
+          MediaRecorder.isTypeSupported("audio/mp4") ? "audio/mp4" :
+          MediaRecorder.isTypeSupported("audio/aac") ? "audio/aac" : "";
 
         const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+        // Use recorder.mimeType — the browser's actual chosen type (may differ from requested)
+        const resolvedMime = recorder.mimeType || mimeType;
 
         recorder.ondataavailable = (e) => {
           if (e.data.size > 0) audioChunksRef.current.push(e.data);
@@ -241,8 +244,13 @@ export default function SearchPage() {
 
         recorder.onstop = async () => {
           stream.getTracks().forEach((t) => t.stop());
-          const ext = mimeType.includes("mp4") ? "mp4" : "webm";
-          const blob = new Blob(audioChunksRef.current, { type: mimeType || "audio/webm" });
+          const isMp4 = resolvedMime.includes("mp4") || resolvedMime.includes("aac") || resolvedMime.includes("m4a");
+          const ext = isMp4 ? "mp4" : "webm";
+          const blob = new Blob(audioChunksRef.current, { type: resolvedMime || "audio/webm" });
+          if (blob.size < 1000) {
+            setIsTranscribing(false);
+            return; // Recording too small — skip
+          }
           const formData = new FormData();
           formData.append("audio", blob, `recording.${ext}`);
 
@@ -264,7 +272,7 @@ export default function SearchPage() {
           }
         };
 
-        recorder.start();
+        recorder.start(1000); // timesliced — ensures ondataavailable fires regularly
         mediaRecorderRef.current = recorder;
         setIsRecording(true);
         setTimeout(drawWaveform, 50);
