@@ -235,7 +235,11 @@ export default function NotesPage() {
 
   useEffect(() => {
     if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+      requestAnimationFrame(() => {
+        if (scrollRef.current) {
+          scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+        }
+      });
     }
   }, [messages, isProcessing]);
 
@@ -626,7 +630,7 @@ export default function NotesPage() {
 
   if (!hasStarted) {
     return (
-      <div className="flex flex-col items-center justify-center h-[calc(100vh-8rem)] md:h-[calc(100vh-4rem)] md:-mt-8 px-4">
+      <div className="flex flex-col items-center justify-center h-[calc(100dvh-6rem)] md:h-[calc(100dvh-4rem)] md:-mt-8 px-4">
         <div className="w-12 h-12 rounded-2xl bg-violet-500/10 border border-violet-500/20 flex items-center justify-center mb-8">
           <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-violet-400">
             <path d="M12 20h9" /><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
@@ -641,8 +645,8 @@ export default function NotesPage() {
   }
 
   return (
-    <div className="flex flex-col h-[calc(100vh-8rem)] md:h-[calc(100vh-4rem)]">
-      <div ref={scrollRef} className="flex-1 overflow-y-auto">
+    <div className="flex flex-col h-[calc(100dvh-6rem)] md:h-[calc(100dvh-4rem)]">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto min-h-0">
         <div className="max-w-2xl mx-auto py-6 flex flex-col gap-6">
           {messages.map((msg, i) => {
             const isLatest = i === messages.length - 1;
@@ -803,7 +807,7 @@ export default function NotesPage() {
         </div>
       </div>
 
-      <div className="pb-6 pt-4 px-4 mb-14 md:mb-0">
+      <div className="pb-6 pt-4 px-4">
         {inputBar}
       </div>
     </div>
