@@ -219,19 +219,39 @@ export default function NotesPage() {
 
   const hasStarted = messages.length > 0 || isProcessing;
 
-  // Build conversation history for the classify API
-  const buildConversation = (msgs: ChatMessage[]) =>
-    msgs.flatMap((m): { role: "user" | "assistant"; content: string }[] => {
-      if (m.role === "user") return [{ role: "user", content: m.text }];
-      if (m.role === "notes") return [{ role: "assistant", content: JSON.stringify({ people: m.people }) }];
-      if (m.role === "tasks") return [{
-        role: "assistant",
-        // Explicit: don't re-suggest these — fixes duplicate tasks bug
-        content: `Already saved — do NOT re-suggest these tasks: ${m.tasks.map((t) => t.title).join(", ")}`,
-      }];
-      if (m.role === "ambiguous") return [{ role: "assistant", content: "I wasn't sure if this was tasks or notes, asked user to clarify." }];
-      return [];
-    });
+  // Build conversation history — sanitize already-processed messages
+  // so the AI doesn't re-extract tasks/people from old user inputs.
+  const buildConversation = (msgs: ChatMessage[]) => {
+    const result: { role: "user" | "assistant"; content: string }[] = [];
+    for (let i = 0; i < msgs.length; i++) {
+      const m = msgs[i];
+      if (m.role === "user") {
+        const next = msgs[i + 1];
+        // If the next message is a response, this input was already processed
+        if (next && (next.role === "tasks" || next.role === "notes" || next.role === "ambiguous")) {
+          result.push({ role: "user", content: `[Already processed: "${m.text}"]` });
+        } else {
+          result.push({ role: "user", content: m.text });
+        }
+      } else if (m.role === "tasks") {
+        const titles = m.tasks.map((t) => t.title).join(", ");
+        result.push({
+          role: "assistant",
+          content: titles
+            ? `[Created tasks: ${titles}. Already saved — do not recreate.]`
+            : `[Tasks were created then deleted by user. Ignore the preceding message entirely.]`,
+        });
+      } else if (m.role === "notes") {
+        result.push({
+          role: "assistant",
+          content: `[Saved contacts: ${m.people.map((p) => p.name).join(", ")}]`,
+        });
+      } else if (m.role === "ambiguous") {
+        result.push({ role: "assistant", content: "[Asked user to clarify intent]" });
+      }
+    }
+    return result;
+  };
 
   const drawWaveform = () => {
     const analyser = analyserRef.current;
