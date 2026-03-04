@@ -10,3 +10,12 @@ export function authedFetch(url: string, options: RequestInit = {}, token: strin
     },
   });
 }
+
+// For multipart/form-data (e.g. audio upload) — let browser set Content-Type with boundary
+export function authedFormFetch(url: string, formData: FormData, token: string) {
+  return fetch(url, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: formData,
+  });
+}
