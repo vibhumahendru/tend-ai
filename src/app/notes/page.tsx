@@ -582,14 +582,14 @@ export default function NotesPage() {
           <button
             onClick={handleRecord}
             disabled={isTranscribing}
-            className={`flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-medium transition-colors disabled:opacity-40 ${
+            title={isRecording ? "Stop recording" : "Start recording"}
+            className={`p-2 rounded-xl transition-colors disabled:opacity-40 ${
               isRecording
                 ? "bg-red-500/15 text-red-400 border border-red-500/30"
                 : "bg-gray-800 text-gray-400 hover:text-gray-200 border border-gray-700/50 hover:border-gray-600"
             }`}
           >
             <MicIcon size={14} />
-            {isRecording ? "Stop" : "Record"}
           </button>
 
           <div className="flex-1" />

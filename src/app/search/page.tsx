@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { API_BASE, authedFetch } from "@/lib/api";
+import { API_BASE, authedFetch, authedFormFetch } from "@/lib/api";
 import { useAuth } from "@/components/AuthProvider";
 
 const prompts = [
@@ -164,11 +164,115 @@ export default function SearchPage() {
   const [hasStarted, setHasStarted] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  if (authLoading || !session) return null;
+  const [isRecording, setIsRecording] = useState(false);
+  const [isTranscribing, setIsTranscribing] = useState(false);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const animFrameRef = useRef<number | null>(null);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  if (authLoading || !session) return null;
+
+  const drawWaveform = () => {
+    const analyser = analyserRef.current;
+    const canvas = canvasRef.current;
+    if (!analyser || !canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    const bufferLength = analyser.fftSize;
+    const dataArray = new Uint8Array(bufferLength);
+    const draw = () => {
+      animFrameRef.current = requestAnimationFrame(draw);
+      analyser.getByteTimeDomainData(dataArray);
+      const { width, height } = canvas;
+      ctx.clearRect(0, 0, width, height);
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = "#a78bfa";
+      ctx.beginPath();
+      const sliceWidth = width / bufferLength;
+      let x = 0;
+      for (let i = 0; i < bufferLength; i++) {
+        const v = dataArray[i] / 128.0;
+        const y = (v * height) / 2;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+        x += sliceWidth;
+      }
+      ctx.lineTo(width, height / 2);
+      ctx.stroke();
+    };
+    draw();
+  };
+
+  const handleRecord = async () => {
+    if (isRecording) {
+      if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
+      audioCtxRef.current?.close();
+      mediaRecorderRef.current?.stop();
+      setIsRecording(false);
+    } else {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        audioChunksRef.current = [];
+
+        const audioCtx = new AudioContext();
+        const analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 1024;
+        audioCtx.createMediaStreamSource(stream).connect(analyser);
+        analyserRef.current = analyser;
+        audioCtxRef.current = audioCtx;
+
+        const mimeType =
+          MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? "audio/webm;codecs=opus" :
+          MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" :
+          MediaRecorder.isTypeSupported("audio/mp4") ? "audio/mp4" : "";
+
+        const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+
+        recorder.ondataavailable = (e) => {
+          if (e.data.size > 0) audioChunksRef.current.push(e.data);
+        };
+
+        recorder.onstop = async () => {
+          stream.getTracks().forEach((t) => t.stop());
+          const ext = mimeType.includes("mp4") ? "mp4" : "webm";
+          const blob = new Blob(audioChunksRef.current, { type: mimeType || "audio/webm" });
+          const formData = new FormData();
+          formData.append("audio", blob, `recording.${ext}`);
+
+          setIsTranscribing(true);
+          try {
+            const res = await authedFormFetch(
+              `${API_BASE}/tend/transcribe/`,
+              formData,
+              session.access_token
+            );
+            if (res.ok) {
+              const data = await res.json();
+              setInput(data.text ?? "");
+            }
+          } catch {
+            // Transcription failed silently — user can type manually
+          } finally {
+            setIsTranscribing(false);
+          }
+        };
+
+        recorder.start();
+        mediaRecorderRef.current = recorder;
+        setIsRecording(true);
+        setTimeout(drawWaveform, 50);
+      } catch {
+        // Microphone permission denied
+      }
+    }
+  };
 
   const handleSubmit = async () => {
     if (!input.trim() || isLoading) return;
@@ -217,34 +321,66 @@ export default function SearchPage() {
 
   const inputBar = (
     <div className="max-w-2xl mx-auto w-full">
-      <div className="flex items-end gap-2 bg-gray-900 border border-gray-800/60 rounded-2xl px-4 py-3 focus-within:border-violet-500/40 focus-within:ring-1 focus-within:ring-violet-500/15 transition-all">
-        <button
-          className="p-1.5 rounded-lg text-gray-500 hover:text-violet-400 hover:bg-violet-500/10 transition-colors shrink-0 mb-0.5"
-          title="Voice input"
-        >
-          <MicIcon />
-        </button>
-        <textarea
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              handleSubmit();
+      <div className="bg-gray-900 border border-gray-800/60 rounded-2xl px-4 py-3 focus-within:border-violet-500/40 focus-within:ring-1 focus-within:ring-violet-500/15 transition-all">
+        {isRecording && (
+          <div className="mb-3">
+            <div className="flex items-center gap-2 mb-2">
+              <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+              <span className="text-xs text-red-400 font-medium">Recording…</span>
+              <span className="text-xs text-gray-600 ml-auto">Tap mic to stop</span>
+            </div>
+            <canvas
+              ref={canvasRef}
+              width={560}
+              height={48}
+              className="w-full h-12 rounded-lg bg-gray-800/40"
+            />
+          </div>
+        )}
+        {isTranscribing && (
+          <div className="flex items-center gap-2 mb-3">
+            <span className="w-3.5 h-3.5 border-2 border-violet-400/30 border-t-violet-400 rounded-full animate-spin" />
+            <span className="text-xs text-violet-400 font-medium">Transcribing…</span>
+          </div>
+        )}
+        <div className="flex items-end gap-2">
+          <button
+            onClick={handleRecord}
+            disabled={isTranscribing}
+            title={isRecording ? "Stop recording" : "Start recording"}
+            className={`p-1.5 rounded-lg transition-colors shrink-0 mb-0.5 ${
+              isRecording
+                ? "bg-red-500/15 text-red-400"
+                : "text-gray-500 hover:text-violet-400 hover:bg-violet-500/10"
+            }`}
+          >
+            <MicIcon />
+          </button>
+          <textarea
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey && !isRecording) {
+                e.preventDefault();
+                handleSubmit();
+              }
+            }}
+            placeholder={
+              isRecording ? "Listening…" : isTranscribing ? "Transcribing…" : "Ask about your relationships..."
             }
-          }}
-          placeholder="Ask about your relationships..."
-          rows={1}
-          className="flex-1 bg-transparent text-sm text-gray-200 placeholder-gray-600 resize-none focus:outline-none min-h-[24px] max-h-[120px]"
-          style={{ fieldSizing: "content" } as React.CSSProperties}
-        />
-        <button
-          onClick={handleSubmit}
-          disabled={!input.trim() || isLoading}
-          className="p-1.5 rounded-lg bg-violet-600 hover:bg-violet-500 disabled:bg-gray-800 disabled:text-gray-600 text-white transition-colors shrink-0 mb-0.5"
-        >
-          <SendIcon />
-        </button>
+            rows={1}
+            disabled={isRecording || isTranscribing}
+            className="flex-1 bg-transparent text-sm text-gray-200 placeholder-gray-600 resize-none focus:outline-none min-h-[24px] max-h-[120px] disabled:opacity-50"
+            style={{ fieldSizing: "content" } as React.CSSProperties}
+          />
+          <button
+            onClick={handleSubmit}
+            disabled={!input.trim() || isLoading || isRecording || isTranscribing}
+            className="p-1.5 rounded-lg bg-violet-600 hover:bg-violet-500 disabled:bg-gray-800 disabled:text-gray-600 text-white transition-colors shrink-0 mb-0.5"
+          >
+            <SendIcon />
+          </button>
+        </div>
       </div>
       <p className="text-[10px] text-gray-700 text-center mt-2">
         Tend AI can make mistakes. Your data stays private.
@@ -255,7 +391,7 @@ export default function SearchPage() {
   // Empty state
   if (!hasStarted) {
     return (
-      <div className="flex flex-col items-center justify-center h-[calc(100vh-8rem)] md:h-[calc(100vh-4rem)] md:-mt-8 px-4">
+      <div className="flex flex-col items-center justify-center h-[calc(100dvh-6rem)] md:h-[calc(100dvh-4rem)] md:-mt-8 px-4">
         <div className="w-12 h-12 rounded-2xl bg-violet-500/10 border border-violet-500/20 flex items-center justify-center mb-8">
           <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-violet-400">
             <circle cx="11" cy="11" r="8" />
@@ -272,8 +408,8 @@ export default function SearchPage() {
 
   // Conversation state
   return (
-    <div className="flex flex-col h-[calc(100vh-8rem)] md:h-[calc(100vh-4rem)]">
-      <div className="flex-1 overflow-y-auto">
+    <div className="flex flex-col h-[calc(100dvh-6rem)] md:h-[calc(100dvh-4rem)]">
+      <div className="flex-1 overflow-y-auto min-h-0">
         <div className="max-w-2xl mx-auto py-6 flex flex-col gap-6">
           {messages.map((msg, i) => (
             <div key={i} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start w-full"}`}>
@@ -310,7 +446,7 @@ export default function SearchPage() {
         </div>
       </div>
 
-      <div className="pb-6 pt-4 px-4 mb-14 md:mb-0">
+      <div className="pb-6 pt-4 px-4">
         {inputBar}
       </div>
     </div>
