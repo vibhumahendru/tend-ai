@@ -2,7 +2,7 @@
   "name": "Tend AI",
   "short_name": "Tend",
   "description": "Your emotionally intelligent relationship memory",
-  "start_url": "/dashboard",
+  "start_url": "/notes",
   "display": "standalone",
   "background_color": "#030712",
   "theme_color": "#030712",
