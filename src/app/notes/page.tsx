@@ -309,7 +309,12 @@ export default function NotesPage() {
         analyserRef.current = analyser;
         audioCtxRef.current = audioCtx;
 
-        const recorder = new MediaRecorder(stream);
+        const mimeType =
+          MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? "audio/webm;codecs=opus" :
+          MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" :
+          MediaRecorder.isTypeSupported("audio/mp4") ? "audio/mp4" : "";
+
+        const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
 
         recorder.ondataavailable = (e) => {
           if (e.data.size > 0) audioChunksRef.current.push(e.data);
@@ -317,9 +322,10 @@ export default function NotesPage() {
 
         recorder.onstop = async () => {
           stream.getTracks().forEach((t) => t.stop());
-          const blob = new Blob(audioChunksRef.current, { type: "audio/webm" });
+          const ext = mimeType.includes("mp4") ? "mp4" : "webm";
+          const blob = new Blob(audioChunksRef.current, { type: mimeType || "audio/webm" });
           const formData = new FormData();
-          formData.append("audio", blob, "recording.webm");
+          formData.append("audio", blob, `recording.${ext}`);
 
           setIsTranscribing(true);
           try {
