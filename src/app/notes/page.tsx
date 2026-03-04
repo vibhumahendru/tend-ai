@@ -72,15 +72,16 @@ interface ParsedTask {
   due_date: string | null;
   urgency: "low" | "neutral" | "high";
   category: "work" | "admin" | "personal" | "ideas";
-  selected: boolean;
 }
 
-type EnergyLevel = "energised" | "neutral" | "drained" | null;
+// After auto-saving — have backend IDs for deletion
+interface SavedTask extends ParsedTask { id: string; }
+interface SavedPerson extends ParsedPerson { id: string; }
 
 type ChatMessage =
   | { role: "user"; text: string }
-  | { role: "notes"; people: ParsedPerson[]; error?: string }
-  | { role: "tasks"; tasks: ParsedTask[]; saved?: boolean }
+  | { role: "notes"; people: SavedPerson[]; error?: string }
+  | { role: "tasks"; tasks: SavedTask[] }
   | { role: "ambiguous"; pendingText: string; tasks: ParsedTask[]; people: ParsedPerson[] };
 
 // --- Style maps ---
@@ -118,10 +119,13 @@ function SendIcon() {
   );
 }
 
-function CheckIcon() {
+function TrashIcon({ size = 14 }: { size?: number }) {
   return (
-    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-      <polyline points="20 6 9 17 4 12" />
+    <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="3 6 5 6 21 6" />
+      <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+      <path d="M10 11v6" /><path d="M14 11v6" />
+      <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
     </svg>
   );
 }
@@ -130,17 +134,21 @@ function CheckIcon() {
 
 function PersonCard({
   person,
-  energy,
-  onEnergyChange,
-  saved,
+  onDelete,
 }: {
-  person: ParsedPerson;
-  energy: EnergyLevel;
-  onEnergyChange: (level: EnergyLevel) => void;
-  saved: boolean;
+  person: SavedPerson;
+  onDelete: () => void;
 }) {
   return (
-    <div className={`bg-gray-900 border rounded-xl p-5 transition-all ${saved ? "border-emerald-500/30 bg-emerald-500/5" : "border-gray-800/60"}`}>
+    <div className="bg-gray-900 border border-gray-800/60 rounded-xl p-5 relative group">
+      <button
+        onClick={onDelete}
+        className="absolute top-3 right-3 p-1.5 rounded-lg text-gray-600 hover:text-red-400 hover:bg-red-500/10 transition-colors opacity-0 group-hover:opacity-100"
+        title="Delete contact"
+      >
+        <TrashIcon size={13} />
+      </button>
+
       <div className="flex items-center gap-3 mb-3">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
@@ -150,7 +158,7 @@ function PersonCard({
           height={40}
           className="rounded-full bg-gray-800 shrink-0"
         />
-        <div className="flex-1 min-w-0">
+        <div className="flex-1 min-w-0 pr-6">
           <p className="text-sm font-semibold text-gray-100">{person.name}</p>
           {person.interaction_date && (
             <p className="text-[11px] text-gray-500 mt-0.5">{person.interaction_date}</p>
@@ -161,7 +169,7 @@ function PersonCard({
       <p className="text-sm text-gray-300 leading-relaxed mb-3">{person.note_about_them}</p>
 
       {person.tags.length > 0 && (
-        <div className="flex flex-wrap gap-1.5 mb-4">
+        <div className="flex flex-wrap gap-1.5">
           {person.tags.map((tag) => (
             <span key={tag} className="px-2 py-0.5 rounded-full bg-violet-500/10 text-violet-400 text-[10px] font-medium">
               {tag}
@@ -169,38 +177,6 @@ function PersonCard({
           ))}
         </div>
       )}
-
-      <div className="border-t border-gray-800/60 pt-4">
-        <p className="text-[11px] text-gray-500 font-medium mb-2.5">How did you feel?</p>
-        <div className="flex gap-2 flex-wrap">
-          {(["energised", "neutral", "drained"] as const).map((level) => {
-            const labels = { energised: "⚡ Energised", neutral: "😐 Neutral", drained: "🪫 Drained" };
-            const activeClass = {
-              energised: "bg-emerald-500/20 border-emerald-500/50 text-emerald-400",
-              neutral: "bg-gray-600/30 border-gray-500/50 text-gray-300",
-              drained: "bg-red-500/20 border-red-500/50 text-red-400",
-            }[level];
-            const hoverClass = {
-              energised: "hover:border-emerald-500/30 hover:text-emerald-400",
-              neutral: "hover:border-gray-500/40 hover:text-gray-300",
-              drained: "hover:border-red-500/30 hover:text-red-400",
-            }[level];
-            return (
-              <button
-                key={level}
-                onClick={() => onEnergyChange(energy === level ? null : level)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-medium border transition-all ${
-                  energy === level
-                    ? activeClass
-                    : `bg-gray-800/60 border-gray-700/40 text-gray-500 ${hoverClass}`
-                }`}
-              >
-                {labels[level]}
-              </button>
-            );
-          })}
-        </div>
-      </div>
     </div>
   );
 }
@@ -220,10 +196,6 @@ export default function NotesPage() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
-  const [isSaving, setIsSaving] = useState(false);
-  const [isSaved, setIsSaved] = useState(false);
-  const [currentPeople, setCurrentPeople] = useState<ParsedPerson[] | null>(null);
-  const [energySelections, setEnergySelections] = useState<Record<string, EnergyLevel>>({});
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -247,12 +219,16 @@ export default function NotesPage() {
 
   const hasStarted = messages.length > 0 || isProcessing;
 
-  // Build GPT conversation history from prior messages
+  // Build conversation history for the classify API
   const buildConversation = (msgs: ChatMessage[]) =>
     msgs.flatMap((m): { role: "user" | "assistant"; content: string }[] => {
       if (m.role === "user") return [{ role: "user", content: m.text }];
       if (m.role === "notes") return [{ role: "assistant", content: JSON.stringify({ people: m.people }) }];
-      if (m.role === "tasks") return [{ role: "assistant", content: `Identified ${m.tasks.length} tasks: ${m.tasks.map((t) => t.title).join(", ")}` }];
+      if (m.role === "tasks") return [{
+        role: "assistant",
+        // Explicit: don't re-suggest these — fixes duplicate tasks bug
+        content: `Already saved — do NOT re-suggest these tasks: ${m.tasks.map((t) => t.title).join(", ")}`,
+      }];
       if (m.role === "ambiguous") return [{ role: "assistant", content: "I wasn't sure if this was tasks or notes, asked user to clarify." }];
       return [];
     });
@@ -295,6 +271,37 @@ export default function NotesPage() {
     draw();
   };
 
+  // Auto-save helpers called from handleSubmit
+  const saveContacts = async (people: ParsedPerson[]): Promise<SavedPerson[]> => {
+    const res = await authedFetch(
+      `${API_BASE}/tend/save-contacts/`,
+      { method: "POST", body: JSON.stringify({ people }) },
+      session.access_token
+    );
+    if (!res.ok) return people.map((p) => ({ ...p, id: crypto.randomUUID() }));
+    const data = await res.json();
+    // save-contacts returns ALL contacts — filter to just the ones we saved by name
+    const savedNames = new Set(people.map((p) => p.name.toLowerCase()));
+    const allContacts: SavedPerson[] = data.contacts ?? [];
+    const justSaved = allContacts.filter((c) => savedNames.has(c.name.toLowerCase()));
+    // Enrich with classify data (note_about_them, tags come from classify, not the contact record)
+    return justSaved.map((c) => {
+      const original = people.find((p) => p.name.toLowerCase() === c.name.toLowerCase());
+      return { ...c, ...(original ?? {}) };
+    });
+  };
+
+  const saveTasks = async (tasks: ParsedTask[]): Promise<SavedTask[]> => {
+    const res = await authedFetch(
+      `${API_BASE}/tend/tasks/`,
+      { method: "POST", body: JSON.stringify({ tasks }) },
+      session.access_token
+    );
+    if (!res.ok) return tasks.map((t) => ({ ...t, id: crypto.randomUUID() }));
+    const data = await res.json();
+    return data.tasks ?? [];
+  };
+
   const handleRecord = async () => {
     if (isRecording) {
       if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
@@ -320,7 +327,6 @@ export default function NotesPage() {
           MediaRecorder.isTypeSupported("audio/aac") ? "audio/aac" : "";
 
         const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
-        // Use recorder.mimeType — the browser's actual chosen type (may differ from requested)
         const resolvedMime = recorder.mimeType || mimeType;
 
         recorder.ondataavailable = (e) => {
@@ -334,7 +340,7 @@ export default function NotesPage() {
           const blob = new Blob(audioChunksRef.current, { type: resolvedMime || "audio/webm" });
           if (blob.size < 1000) {
             setIsTranscribing(false);
-            return; // Recording too small — skip (mic likely closed before audio captured)
+            return;
           }
           const formData = new FormData();
           formData.append("audio", blob, `recording.${ext}`);
@@ -348,16 +354,20 @@ export default function NotesPage() {
             );
             if (res.ok) {
               const data = await res.json();
-              setInput(data.text ?? "");
+              const text = data.text ?? "";
+              if (text.trim()) {
+                // Auto-submit: voice notes go straight to classify
+                handleSubmit(text);
+              }
             }
           } catch {
-            // Transcription failed silently — user can type manually
+            // Transcription failed silently
           } finally {
             setIsTranscribing(false);
           }
         };
 
-        recorder.start(1000); // timesliced — ensures ondataavailable fires regularly
+        recorder.start(1000);
         mediaRecorderRef.current = recorder;
         setIsRecording(true);
         setTimeout(drawWaveform, 50);
@@ -367,8 +377,8 @@ export default function NotesPage() {
     }
   };
 
-  const handleSubmit = async () => {
-    const note = input.trim();
+  const handleSubmit = async (overrideText?: string) => {
+    const note = (overrideText ?? input).trim();
     if (!note || isProcessing) return;
 
     const conversation = buildConversation(messages);
@@ -376,39 +386,37 @@ export default function NotesPage() {
     setMessages((prev) => [...prev, { role: "user", text: note }]);
     setInput("");
     setIsProcessing(true);
-    setIsSaved(false);
 
     try {
-      const res = await authedFetch(
+      // Step 1: classify
+      const classifyRes = await authedFetch(
         `${API_BASE}/tend/classify/`,
         { method: "POST", body: JSON.stringify({ note, conversation }) },
         session.access_token
       );
 
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        setMessages((prev) => [...prev, { role: "notes", people: [], error: err.error ?? `Server error ${res.status}` }]);
+      if (!classifyRes.ok) {
+        const err = await classifyRes.json().catch(() => ({}));
+        setMessages((prev) => [...prev, { role: "notes", people: [], error: err.error ?? `Server error ${classifyRes.status}` }]);
         return;
       }
 
-      const data = await res.json();
+      const data = await classifyRes.json();
       const intent: string = data.intent ?? "notes";
-      const rawTasks: Omit<ParsedTask, "selected">[] = data.tasks ?? [];
+      const rawTasks: ParsedTask[] = data.tasks ?? [];
       const people: ParsedPerson[] = data.people ?? [];
 
+      // Step 2: auto-save based on intent
       if (intent === "tasks") {
-        const tasks: ParsedTask[] = rawTasks.map((t) => ({ ...t, selected: true }));
-        setMessages((prev) => [...prev, { role: "tasks", tasks }]);
+        const saved = await saveTasks(rawTasks);
+        setMessages((prev) => [...prev, { role: "tasks", tasks: saved }]);
       } else if (intent === "ambiguous") {
-        const tasks: ParsedTask[] = rawTasks.map((t) => ({ ...t, selected: true }));
-        setMessages((prev) => [...prev, { role: "ambiguous", pendingText: note, tasks, people }]);
+        // Don't save yet — wait for user to resolve
+        setMessages((prev) => [...prev, { role: "ambiguous", pendingText: note, tasks: rawTasks, people }]);
       } else {
         // notes (default)
-        setMessages((prev) => [...prev, { role: "notes", people }]);
-        setCurrentPeople(people);
-        const initial: Record<string, EnergyLevel> = {};
-        for (const p of people) initial[p.name] = p.energy_level ?? null;
-        setEnergySelections(initial);
+        const saved = await saveContacts(people);
+        setMessages((prev) => [...prev, { role: "notes", people: saved }]);
       }
     } catch {
       setMessages((prev) => [...prev, { role: "notes", people: [], error: "Something went wrong. Is the backend running?" }]);
@@ -417,128 +425,64 @@ export default function NotesPage() {
     }
   };
 
-  const handleSaveContacts = async () => {
-    if (!currentPeople || isSaving) return;
-    setIsSaving(true);
-
-    const people = currentPeople.map((p) => ({
-      ...p,
-      energy_level: energySelections[p.name] ?? p.energy_level,
-    }));
-
-    try {
-      const res = await authedFetch(
-        `${API_BASE}/tend/save-contacts/`,
-        { method: "POST", body: JSON.stringify({ people }) },
-        session.access_token
-      );
-      if (!res.ok) throw new Error("Save failed");
-      setIsSaved(true);
-    } catch {
-      setIsSaved(true); // Optimistic for demo
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
-  const handleSaveTasks = async (msgIndex: number) => {
-    const msg = messages[msgIndex];
-    if (msg.role !== "tasks" || msg.saved || isSaving) return;
-    setIsSaving(true);
-
-    const selectedTasks = msg.tasks
-      .filter((t) => t.selected)
-      .map(({ title, due_date, urgency, category }) => ({ title, due_date, urgency, category }));
-
-    try {
-      const res = await authedFetch(
-        `${API_BASE}/tend/tasks/`,
-        { method: "POST", body: JSON.stringify({ tasks: selectedTasks }) },
-        session.access_token
-      );
-      if (!res.ok) throw new Error("Save failed");
-      setMessages((prev) =>
-        prev.map((m, i) => (i === msgIndex && m.role === "tasks" ? { ...m, saved: true } : m))
-      );
-    } catch {
-      // Silently fail — could show error toast in future
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
-  const toggleTask = (msgIndex: number, taskIndex: number) => {
+  const handleDeleteTask = async (msgIndex: number, taskId: string) => {
+    // Optimistic UI
     setMessages((prev) =>
       prev.map((m, i) => {
         if (i !== msgIndex || m.role !== "tasks") return m;
-        return {
-          ...m,
-          tasks: m.tasks.map((t, j) => (j === taskIndex ? { ...t, selected: !t.selected } : t)),
-        };
+        return { ...m, tasks: m.tasks.filter((t) => t.id !== taskId) };
       })
     );
+    await authedFetch(
+      `${API_BASE}/tend/tasks/${taskId}/`,
+      { method: "DELETE" },
+      session.access_token
+    ).catch(() => {/* silently ignore */});
   };
 
-  const handleResolveAmbiguous = (msgIndex: number, intent: "tasks" | "notes") => {
+  const handleDeleteContact = async (msgIndex: number, contactId: string) => {
+    // Optimistic UI
+    setMessages((prev) =>
+      prev.map((m, i) => {
+        if (i !== msgIndex || m.role !== "notes") return m;
+        return { ...m, people: m.people.filter((p) => p.id !== contactId) };
+      })
+    );
+    await authedFetch(
+      `${API_BASE}/tend/contacts/${contactId}/`,
+      { method: "DELETE" },
+      session.access_token
+    ).catch(() => {/* silently ignore */});
+  };
+
+  const handleResolveAmbiguous = async (msgIndex: number, intent: "tasks" | "notes") => {
     const msg = messages[msgIndex];
     if (msg.role !== "ambiguous") return;
 
-    if (intent === "tasks") {
-      setMessages((prev) => [...prev, { role: "tasks", tasks: msg.tasks }]);
-    } else {
-      setMessages((prev) => [...prev, { role: "notes", people: msg.people }]);
-      setCurrentPeople(msg.people);
-      const initial: Record<string, EnergyLevel> = {};
-      for (const p of msg.people) initial[p.name] = p.energy_level ?? null;
-      setEnergySelections(initial);
+    setIsProcessing(true);
+    try {
+      if (intent === "tasks") {
+        const saved = await saveTasks(msg.tasks);
+        setMessages((prev) => [...prev, { role: "tasks", tasks: saved }]);
+      } else {
+        const saved = await saveContacts(msg.people);
+        setMessages((prev) => [...prev, { role: "notes", people: saved }]);
+      }
+    } catch {
+      // Silently fail
+    } finally {
+      setIsProcessing(false);
     }
   };
 
   const handleReset = () => {
     setInput("");
     setMessages([]);
-    setCurrentPeople(null);
-    setEnergySelections({});
-    setIsSaved(false);
     setIsRecording(false);
-  };
-
-  const setEnergy = (name: string, level: EnergyLevel) => {
-    setEnergySelections((prev) => ({ ...prev, [name]: level }));
   };
 
   const inputBar = (
     <div className="max-w-2xl mx-auto w-full">
-      {/* Save bar for contacts */}
-      {currentPeople && currentPeople.length > 0 && (
-        <div className="flex justify-center mb-3">
-          {!isSaved ? (
-            <button
-              onClick={handleSaveContacts}
-              disabled={isSaving}
-              className="flex items-center gap-2 px-6 py-2.5 rounded-xl bg-violet-600 hover:bg-violet-500 disabled:opacity-60 text-white text-sm font-medium transition-colors"
-            >
-              {isSaving ? (
-                <>
-                  <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                  Saving...
-                </>
-              ) : (
-                <>
-                  <CheckIcon />
-                  Save to profiles
-                </>
-              )}
-            </button>
-          ) : (
-            <div className="flex items-center gap-2 px-6 py-2.5 rounded-xl bg-emerald-500/15 text-emerald-400 text-sm font-medium">
-              <CheckIcon />
-              Saved!
-            </div>
-          )}
-        </div>
-      )}
-
       <div className="bg-gray-900 border border-gray-800/60 rounded-2xl px-4 py-3 focus-within:border-violet-500/40 focus-within:ring-1 focus-within:ring-violet-500/15 transition-all">
         {isRecording && (
           <div className="mb-3">
@@ -612,7 +556,7 @@ export default function NotesPage() {
           )}
 
           <button
-            onClick={handleSubmit}
+            onClick={() => handleSubmit()}
             disabled={!input.trim() || isProcessing || isRecording || isTranscribing}
             className="flex items-center gap-2 px-4 py-2 rounded-xl bg-violet-600 hover:bg-violet-500 disabled:bg-gray-800 disabled:text-gray-600 text-white text-xs font-medium transition-colors"
           >
@@ -657,8 +601,6 @@ export default function NotesPage() {
       <div ref={scrollRef} className="flex-1 overflow-y-auto min-h-0">
         <div className="max-w-2xl mx-auto py-6 flex flex-col gap-6">
           {messages.map((msg, i) => {
-            const isLatest = i === messages.length - 1;
-
             // User bubble
             if (msg.role === "user") {
               return (
@@ -685,16 +627,14 @@ export default function NotesPage() {
                   ) : (
                     <>
                       <p className="text-xs text-gray-500 uppercase tracking-wider font-semibold">
-                        {isLatest ? "Here's a breakdown of your notes" : "Previous response"}
+                        {msg.people.length} profile{msg.people.length !== 1 ? "s" : ""} saved — tap trash to delete
                       </p>
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         {msg.people.map((person) => (
                           <PersonCard
-                            key={person.name}
+                            key={person.id}
                             person={person}
-                            energy={isLatest ? (energySelections[person.name] ?? null) : (person.energy_level ?? null)}
-                            onEnergyChange={isLatest ? (level) => setEnergy(person.name, level) : () => {}}
-                            saved={isSaved && isLatest}
+                            onDelete={() => handleDeleteContact(i, person.id)}
                           />
                         ))}
                       </div>
@@ -704,73 +644,54 @@ export default function NotesPage() {
               );
             }
 
-            // Tasks message (confirmation card)
+            // Tasks message
             if (msg.role === "tasks") {
-              const selectedCount = msg.tasks.filter((t) => t.selected).length;
               return (
                 <div key={i} className="flex flex-col gap-3">
                   <p className="text-xs text-gray-500 uppercase tracking-wider font-semibold">
-                    {msg.saved ? "Tasks saved" : isLatest ? `${msg.tasks.length} task${msg.tasks.length !== 1 ? "s" : ""} found` : "Previous tasks"}
+                    {msg.tasks.length} task{msg.tasks.length !== 1 ? "s" : ""} created — tap trash to delete
                   </p>
                   <div className="bg-gray-900 border border-gray-800/60 rounded-xl overflow-hidden">
-                    {msg.tasks.map((task, j) => (
-                      <div
-                        key={j}
-                        className={`flex items-start gap-3 px-4 py-3.5 ${j > 0 ? "border-t border-gray-800/40" : ""} ${msg.saved ? "opacity-50" : ""}`}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={task.selected}
-                          onChange={() => { if (!msg.saved) toggleTask(i, j); }}
-                          className="mt-0.5 w-4 h-4 accent-violet-500 cursor-pointer"
-                        />
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm text-gray-200 leading-snug">{task.title}</p>
-                          {task.due_date && (
-                            <p className="text-[11px] text-gray-500 mt-0.5">{task.due_date}</p>
-                          )}
-                        </div>
-                        <div className="flex gap-1.5 shrink-0 flex-wrap justify-end">
-                          <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full border ${urgencyStyles[task.urgency]}`}>
-                            {task.urgency.toUpperCase()}
-                          </span>
-                          <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full border ${categoryStyles[task.category]}`}>
-                            {task.category.toUpperCase()}
-                          </span>
-                        </div>
+                    {msg.tasks.length === 0 ? (
+                      <div className="px-4 py-4">
+                        <p className="text-sm text-gray-500">All tasks deleted.</p>
                       </div>
-                    ))}
-                    <div className="px-4 py-3 border-t border-gray-800/40 flex justify-end">
-                      {msg.saved ? (
-                        <div className="flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-500/15 text-emerald-400 text-xs font-medium">
-                          <CheckIcon /> Saved!
-                        </div>
-                      ) : isLatest ? (
-                        <button
-                          onClick={() => handleSaveTasks(i)}
-                          disabled={selectedCount === 0 || isSaving}
-                          className="flex items-center gap-2 px-4 py-2 rounded-xl bg-violet-600 hover:bg-violet-500 disabled:bg-gray-800 disabled:text-gray-600 text-white text-xs font-medium transition-colors"
+                    ) : (
+                      msg.tasks.map((task, j) => (
+                        <div
+                          key={task.id}
+                          className={`flex items-start gap-3 px-4 py-3.5 ${j > 0 ? "border-t border-gray-800/40" : ""}`}
                         >
-                          {isSaving ? (
-                            <>
-                              <span className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                              Saving...
-                            </>
-                          ) : (
-                            <>
-                              <CheckIcon />
-                              Save {selectedCount} task{selectedCount !== 1 ? "s" : ""}
-                            </>
-                          )}
-                        </button>
-                      ) : null}
-                    </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm text-gray-200 leading-snug">{task.title}</p>
+                            {task.due_date && (
+                              <p className="text-[11px] text-gray-500 mt-0.5">{task.due_date}</p>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
+                            <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full border ${urgencyStyles[task.urgency]}`}>
+                              {task.urgency.toUpperCase()}
+                            </span>
+                            <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full border ${categoryStyles[task.category]}`}>
+                              {task.category.toUpperCase()}
+                            </span>
+                            <button
+                              onClick={() => handleDeleteTask(i, task.id)}
+                              className="p-1.5 rounded-lg text-gray-600 hover:text-red-400 hover:bg-red-500/10 transition-colors ml-1"
+                              title="Delete task"
+                            >
+                              <TrashIcon size={13} />
+                            </button>
+                          </div>
+                        </div>
+                      ))
+                    )}
                   </div>
                 </div>
               );
             }
 
-            // Ambiguous message (disambiguation prompt)
+            // Ambiguous message
             if (msg.role === "ambiguous") {
               return (
                 <div key={i} className="flex flex-col gap-3">
