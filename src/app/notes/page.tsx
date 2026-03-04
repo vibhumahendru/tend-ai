@@ -10,10 +10,10 @@ import { useAuth } from "@/components/AuthProvider";
 const prompts = [
   "Who did you meet today?",
   "How was that coffee chat?",
-  "How are you feeling about your interactions?",
+  "Any tasks on your mind?",
   "Who made an impression on you recently?",
   "Any interesting conversations worth remembering?",
-  "Who did you reconnect with?",
+  "What do you need to get done?",
 ];
 
 function TypingPrompt() {
@@ -67,11 +67,36 @@ interface ParsedPerson {
   energy_level: "energised" | "neutral" | "drained" | null;
 }
 
+interface ParsedTask {
+  title: string;
+  due_date: string | null;
+  urgency: "low" | "neutral" | "high";
+  category: "work" | "admin" | "personal" | "ideas";
+  selected: boolean;
+}
+
 type EnergyLevel = "energised" | "neutral" | "drained" | null;
 
 type ChatMessage =
   | { role: "user"; text: string }
-  | { role: "ai"; people: ParsedPerson[]; error?: string };
+  | { role: "notes"; people: ParsedPerson[]; error?: string }
+  | { role: "tasks"; tasks: ParsedTask[]; saved?: boolean }
+  | { role: "ambiguous"; pendingText: string; tasks: ParsedTask[]; people: ParsedPerson[] };
+
+// --- Style maps ---
+
+const urgencyStyles: Record<string, string> = {
+  high: "bg-red-500/15 text-red-400 border-red-500/30",
+  neutral: "bg-amber-500/15 text-amber-400 border-amber-500/30",
+  low: "bg-gray-600/20 text-gray-500 border-gray-600/30",
+};
+
+const categoryStyles: Record<string, string> = {
+  work: "bg-blue-500/15 text-blue-400 border-blue-500/30",
+  admin: "bg-orange-500/15 text-orange-400 border-orange-500/30",
+  personal: "bg-pink-500/15 text-pink-400 border-pink-500/30",
+  ideas: "bg-violet-500/15 text-violet-400 border-violet-500/30",
+};
 
 // --- Icons ---
 
@@ -208,7 +233,6 @@ export default function NotesPage() {
   const audioCtxRef = useRef<AudioContext | null>(null);
   const animFrameRef = useRef<number | null>(null);
 
-  // Auto-scroll to bottom when messages update
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
@@ -218,6 +242,16 @@ export default function NotesPage() {
   if (loading || !session) return null;
 
   const hasStarted = messages.length > 0 || isProcessing;
+
+  // Build GPT conversation history from prior messages
+  const buildConversation = (msgs: ChatMessage[]) =>
+    msgs.flatMap((m): { role: "user" | "assistant"; content: string }[] => {
+      if (m.role === "user") return [{ role: "user", content: m.text }];
+      if (m.role === "notes") return [{ role: "assistant", content: JSON.stringify({ people: m.people }) }];
+      if (m.role === "tasks") return [{ role: "assistant", content: `Identified ${m.tasks.length} tasks: ${m.tasks.map((t) => t.title).join(", ")}` }];
+      if (m.role === "ambiguous") return [{ role: "assistant", content: "I wasn't sure if this was tasks or notes, asked user to clarify." }];
+      return [];
+    });
 
   const drawWaveform = () => {
     const analyser = analyserRef.current;
@@ -238,7 +272,7 @@ export default function NotesPage() {
       ctx.clearRect(0, 0, width, height);
 
       ctx.lineWidth = 2;
-      ctx.strokeStyle = "#a78bfa"; // violet-400
+      ctx.strokeStyle = "#a78bfa";
       ctx.beginPath();
 
       const sliceWidth = width / bufferLength;
@@ -259,18 +293,15 @@ export default function NotesPage() {
 
   const handleRecord = async () => {
     if (isRecording) {
-      // Stop recording
       if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
       audioCtxRef.current?.close();
       mediaRecorderRef.current?.stop();
       setIsRecording(false);
     } else {
-      // Start recording
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         audioChunksRef.current = [];
 
-        // Wire up analyser for waveform
         const audioCtx = new AudioContext();
         const analyser = audioCtx.createAnalyser();
         analyser.fftSize = 1024;
@@ -311,11 +342,9 @@ export default function NotesPage() {
         recorder.start();
         mediaRecorderRef.current = recorder;
         setIsRecording(true);
-
-        // Start drawing after state update
         setTimeout(drawWaveform, 50);
       } catch {
-        // Microphone permission denied — ignore
+        // Microphone permission denied
       }
     }
   };
@@ -324,55 +353,53 @@ export default function NotesPage() {
     const note = input.trim();
     if (!note || isProcessing) return;
 
-    // Build conversation history from current messages
-    const conversation = messages.map((m) =>
-      m.role === "user"
-        ? { role: "user", content: m.text }
-        : { role: "assistant", content: JSON.stringify({ people: m.people }) }
-    );
+    const conversation = buildConversation(messages);
 
-    // Append user message and clear input immediately
-    const userMsg: ChatMessage = { role: "user", text: note };
-    setMessages((prev) => [...prev, userMsg]);
+    setMessages((prev) => [...prev, { role: "user", text: note }]);
     setInput("");
     setIsProcessing(true);
     setIsSaved(false);
 
     try {
       const res = await authedFetch(
-        `${API_BASE}/tend/parse-note/`,
+        `${API_BASE}/tend/classify/`,
         { method: "POST", body: JSON.stringify({ note, conversation }) },
         session.access_token
       );
 
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        const aiMsg: ChatMessage = { role: "ai", people: [], error: err.error ?? `Server error ${res.status}` };
-        setMessages((prev) => [...prev, aiMsg]);
+        setMessages((prev) => [...prev, { role: "notes", people: [], error: err.error ?? `Server error ${res.status}` }]);
         return;
       }
 
       const data = await res.json();
+      const intent: string = data.intent ?? "notes";
+      const rawTasks: Omit<ParsedTask, "selected">[] = data.tasks ?? [];
       const people: ParsedPerson[] = data.people ?? [];
-      const aiMsg: ChatMessage = { role: "ai", people };
-      setMessages((prev) => [...prev, aiMsg]);
-      setCurrentPeople(people);
 
-      // Pre-populate energy from latest AI output
-      const initial: Record<string, EnergyLevel> = {};
-      for (const p of people) {
-        initial[p.name] = p.energy_level ?? null;
+      if (intent === "tasks") {
+        const tasks: ParsedTask[] = rawTasks.map((t) => ({ ...t, selected: true }));
+        setMessages((prev) => [...prev, { role: "tasks", tasks }]);
+      } else if (intent === "ambiguous") {
+        const tasks: ParsedTask[] = rawTasks.map((t) => ({ ...t, selected: true }));
+        setMessages((prev) => [...prev, { role: "ambiguous", pendingText: note, tasks, people }]);
+      } else {
+        // notes (default)
+        setMessages((prev) => [...prev, { role: "notes", people }]);
+        setCurrentPeople(people);
+        const initial: Record<string, EnergyLevel> = {};
+        for (const p of people) initial[p.name] = p.energy_level ?? null;
+        setEnergySelections(initial);
       }
-      setEnergySelections(initial);
     } catch {
-      const aiMsg: ChatMessage = { role: "ai", people: [], error: "Something went wrong. Is the backend running?" };
-      setMessages((prev) => [...prev, aiMsg]);
+      setMessages((prev) => [...prev, { role: "notes", people: [], error: "Something went wrong. Is the backend running?" }]);
     } finally {
       setIsProcessing(false);
     }
   };
 
-  const handleSave = async () => {
+  const handleSaveContacts = async () => {
     if (!currentPeople || isSaving) return;
     setIsSaving(true);
 
@@ -396,6 +423,59 @@ export default function NotesPage() {
     }
   };
 
+  const handleSaveTasks = async (msgIndex: number) => {
+    const msg = messages[msgIndex];
+    if (msg.role !== "tasks" || msg.saved || isSaving) return;
+    setIsSaving(true);
+
+    const selectedTasks = msg.tasks
+      .filter((t) => t.selected)
+      .map(({ title, due_date, urgency, category }) => ({ title, due_date, urgency, category }));
+
+    try {
+      const res = await authedFetch(
+        `${API_BASE}/tend/tasks/`,
+        { method: "POST", body: JSON.stringify({ tasks: selectedTasks }) },
+        session.access_token
+      );
+      if (!res.ok) throw new Error("Save failed");
+      setMessages((prev) =>
+        prev.map((m, i) => (i === msgIndex && m.role === "tasks" ? { ...m, saved: true } : m))
+      );
+    } catch {
+      // Silently fail — could show error toast in future
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const toggleTask = (msgIndex: number, taskIndex: number) => {
+    setMessages((prev) =>
+      prev.map((m, i) => {
+        if (i !== msgIndex || m.role !== "tasks") return m;
+        return {
+          ...m,
+          tasks: m.tasks.map((t, j) => (j === taskIndex ? { ...t, selected: !t.selected } : t)),
+        };
+      })
+    );
+  };
+
+  const handleResolveAmbiguous = (msgIndex: number, intent: "tasks" | "notes") => {
+    const msg = messages[msgIndex];
+    if (msg.role !== "ambiguous") return;
+
+    if (intent === "tasks") {
+      setMessages((prev) => [...prev, { role: "tasks", tasks: msg.tasks }]);
+    } else {
+      setMessages((prev) => [...prev, { role: "notes", people: msg.people }]);
+      setCurrentPeople(msg.people);
+      const initial: Record<string, EnergyLevel> = {};
+      for (const p of msg.people) initial[p.name] = p.energy_level ?? null;
+      setEnergySelections(initial);
+    }
+  };
+
   const handleReset = () => {
     setInput("");
     setMessages([]);
@@ -411,12 +491,12 @@ export default function NotesPage() {
 
   const inputBar = (
     <div className="max-w-2xl mx-auto w-full">
-      {/* Save bar — visible whenever we have people to save */}
+      {/* Save bar for contacts */}
       {currentPeople && currentPeople.length > 0 && (
         <div className="flex justify-center mb-3">
           {!isSaved ? (
             <button
-              onClick={handleSave}
+              onClick={handleSaveContacts}
               disabled={isSaving}
               className="flex items-center gap-2 px-6 py-2.5 rounded-xl bg-violet-600 hover:bg-violet-500 disabled:opacity-60 text-white text-sm font-medium transition-colors"
             >
@@ -442,7 +522,6 @@ export default function NotesPage() {
       )}
 
       <div className="bg-gray-900 border border-gray-800/60 rounded-2xl px-4 py-3 focus-within:border-violet-500/40 focus-within:ring-1 focus-within:ring-violet-500/15 transition-all">
-        {/* Waveform canvas — shown while recording */}
         {isRecording && (
           <div className="mb-3">
             <div className="flex items-center gap-2 mb-2">
@@ -459,7 +538,6 @@ export default function NotesPage() {
           </div>
         )}
 
-        {/* Transcribing indicator */}
         {isTranscribing && (
           <div className="flex items-center gap-2 mb-3">
             <span className="w-3.5 h-3.5 border-2 border-violet-400/30 border-t-violet-400 rounded-full animate-spin" />
@@ -483,7 +561,7 @@ export default function NotesPage() {
               ? "Transcribing…"
               : hasStarted
               ? "Continue the conversation…"
-              : "I met Sarah today for coffee. We talked about…"
+              : "I met Sarah today, or: I need to get back to Sam…"
           }
           rows={3}
           disabled={isRecording || isTranscribing}
@@ -540,7 +618,6 @@ export default function NotesPage() {
     </div>
   );
 
-  // Empty state
   if (!hasStarted) {
     return (
       <div className="flex flex-col items-center justify-center h-[calc(100vh-8rem)] md:h-[calc(100vh-4rem)] md:-mt-8 px-4">
@@ -557,12 +634,14 @@ export default function NotesPage() {
     );
   }
 
-  // Conversation state
   return (
     <div className="flex flex-col h-[calc(100vh-8rem)] md:h-[calc(100vh-4rem)]">
       <div ref={scrollRef} className="flex-1 overflow-y-auto">
         <div className="max-w-2xl mx-auto py-6 flex flex-col gap-6">
           {messages.map((msg, i) => {
+            const isLatest = i === messages.length - 1;
+
+            // User bubble
             if (msg.role === "user") {
               return (
                 <div key={i} className="flex justify-end">
@@ -573,38 +652,134 @@ export default function NotesPage() {
               );
             }
 
-            // AI message
-            const isLatest = i === messages.length - 1;
-            return (
-              <div key={i} className="flex flex-col gap-4">
-                {msg.error ? (
-                  <div className="bg-red-500/10 border border-red-500/30 rounded-xl px-4 py-3">
-                    <p className="text-xs text-red-400">{msg.error}</p>
-                  </div>
-                ) : msg.people.length === 0 ? (
-                  <div className="bg-gray-900 border border-gray-800/60 rounded-xl px-4 py-4">
-                    <p className="text-sm text-gray-400">No people detected in that note. Try mentioning someone by name!</p>
-                  </div>
-                ) : (
-                  <>
-                    <p className="text-xs text-gray-500 uppercase tracking-wider font-semibold">
-                      {isLatest ? "Here's a breakdown of your notes" : "Previous response"}
-                    </p>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      {msg.people.map((person) => (
-                        <PersonCard
-                          key={person.name}
-                          person={person}
-                          energy={isLatest ? (energySelections[person.name] ?? null) : (person.energy_level ?? null)}
-                          onEnergyChange={isLatest ? (level) => setEnergy(person.name, level) : () => {}}
-                          saved={isSaved && isLatest}
-                        />
-                      ))}
+            // Notes message (people cards)
+            if (msg.role === "notes") {
+              return (
+                <div key={i} className="flex flex-col gap-4">
+                  {msg.error ? (
+                    <div className="bg-red-500/10 border border-red-500/30 rounded-xl px-4 py-3">
+                      <p className="text-xs text-red-400">{msg.error}</p>
                     </div>
-                  </>
-                )}
-              </div>
-            );
+                  ) : msg.people.length === 0 ? (
+                    <div className="bg-gray-900 border border-gray-800/60 rounded-xl px-4 py-4">
+                      <p className="text-sm text-gray-400">No people detected. Try mentioning someone by name!</p>
+                    </div>
+                  ) : (
+                    <>
+                      <p className="text-xs text-gray-500 uppercase tracking-wider font-semibold">
+                        {isLatest ? "Here's a breakdown of your notes" : "Previous response"}
+                      </p>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {msg.people.map((person) => (
+                          <PersonCard
+                            key={person.name}
+                            person={person}
+                            energy={isLatest ? (energySelections[person.name] ?? null) : (person.energy_level ?? null)}
+                            onEnergyChange={isLatest ? (level) => setEnergy(person.name, level) : () => {}}
+                            saved={isSaved && isLatest}
+                          />
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
+              );
+            }
+
+            // Tasks message (confirmation card)
+            if (msg.role === "tasks") {
+              const selectedCount = msg.tasks.filter((t) => t.selected).length;
+              return (
+                <div key={i} className="flex flex-col gap-3">
+                  <p className="text-xs text-gray-500 uppercase tracking-wider font-semibold">
+                    {msg.saved ? "Tasks saved" : isLatest ? `${msg.tasks.length} task${msg.tasks.length !== 1 ? "s" : ""} found` : "Previous tasks"}
+                  </p>
+                  <div className="bg-gray-900 border border-gray-800/60 rounded-xl overflow-hidden">
+                    {msg.tasks.map((task, j) => (
+                      <div
+                        key={j}
+                        className={`flex items-start gap-3 px-4 py-3.5 ${j > 0 ? "border-t border-gray-800/40" : ""} ${msg.saved ? "opacity-50" : ""}`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={task.selected}
+                          onChange={() => { if (!msg.saved) toggleTask(i, j); }}
+                          className="mt-0.5 w-4 h-4 accent-violet-500 cursor-pointer"
+                        />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm text-gray-200 leading-snug">{task.title}</p>
+                          {task.due_date && (
+                            <p className="text-[11px] text-gray-500 mt-0.5">{task.due_date}</p>
+                          )}
+                        </div>
+                        <div className="flex gap-1.5 shrink-0 flex-wrap justify-end">
+                          <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full border ${urgencyStyles[task.urgency]}`}>
+                            {task.urgency.toUpperCase()}
+                          </span>
+                          <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full border ${categoryStyles[task.category]}`}>
+                            {task.category.toUpperCase()}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                    <div className="px-4 py-3 border-t border-gray-800/40 flex justify-end">
+                      {msg.saved ? (
+                        <div className="flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-500/15 text-emerald-400 text-xs font-medium">
+                          <CheckIcon /> Saved!
+                        </div>
+                      ) : isLatest ? (
+                        <button
+                          onClick={() => handleSaveTasks(i)}
+                          disabled={selectedCount === 0 || isSaving}
+                          className="flex items-center gap-2 px-4 py-2 rounded-xl bg-violet-600 hover:bg-violet-500 disabled:bg-gray-800 disabled:text-gray-600 text-white text-xs font-medium transition-colors"
+                        >
+                          {isSaving ? (
+                            <>
+                              <span className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                              Saving...
+                            </>
+                          ) : (
+                            <>
+                              <CheckIcon />
+                              Save {selectedCount} task{selectedCount !== 1 ? "s" : ""}
+                            </>
+                          )}
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+                </div>
+              );
+            }
+
+            // Ambiguous message (disambiguation prompt)
+            if (msg.role === "ambiguous") {
+              return (
+                <div key={i} className="flex flex-col gap-3">
+                  <div className="bg-gray-900 border border-amber-500/20 rounded-xl px-4 py-4">
+                    <p className="text-sm text-gray-300 mb-3">
+                      Not sure — is this something you need to do, or a note about someone?
+                    </p>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => handleResolveAmbiguous(i, "tasks")}
+                        className="px-4 py-2 rounded-xl bg-violet-600/20 border border-violet-500/30 text-violet-400 text-xs font-medium hover:bg-violet-600/30 transition-colors"
+                      >
+                        📋 It&apos;s a task
+                      </button>
+                      <button
+                        onClick={() => handleResolveAmbiguous(i, "notes")}
+                        className="px-4 py-2 rounded-xl bg-blue-600/20 border border-blue-500/30 text-blue-400 text-xs font-medium hover:bg-blue-600/30 transition-colors"
+                      >
+                        👤 It&apos;s a note about someone
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            }
+
+            return null;
           })}
 
           {/* Typing indicator */}
@@ -622,7 +797,6 @@ export default function NotesPage() {
         </div>
       </div>
 
-      {/* Input pinned at bottom */}
       <div className="pb-6 pt-4 px-4 mb-14 md:mb-0">
         {inputBar}
       </div>
