@@ -1,4 +1,9 @@
+"use client";
+
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { useAuth } from "@/components/AuthProvider";
 
 // --- Static dummy data ---
 
@@ -140,6 +145,15 @@ function Card({ children, className = "" }: { children: React.ReactNode; classNa
 }
 
 export default function DashboardPage() {
+  const { session, loading } = useAuth();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (!loading && !session) router.push("/login");
+  }, [loading, session, router]);
+
+  if (loading || !session) return null;
+
   return (
     <div className="max-w-5xl mx-auto">
       {/* Top bar */}

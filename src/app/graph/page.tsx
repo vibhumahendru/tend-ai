@@ -1,9 +1,11 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import { contacts } from "@/lib/dummy-contacts";
 import type { Contact } from "@/lib/dummy-contacts";
 import Link from "next/link";
+import { useAuth } from "@/components/AuthProvider";
 
 // --- Layout config ---
 
@@ -66,6 +68,9 @@ interface TooltipData {
 }
 
 export default function GraphPage() {
+  const { session, loading: authLoading } = useAuth();
+  const router = useRouter();
+
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const nodesRef = useRef<Node[]>([]);
   const mouseRef = useRef({ x: -9999, y: -9999, prevX: -9999, prevY: -9999, speed: 0 });
@@ -74,6 +79,10 @@ export default function GraphPage() {
   const hoveredNodeRef = useRef<Node | null>(null);
   const [tooltip, setTooltip] = useState<TooltipData | null>(null);
   const [dimensions, setDimensions] = useState({ w: 0, h: 0 });
+
+  useEffect(() => {
+    if (!authLoading && !session) router.push("/login");
+  }, [authLoading, session, router]);
 
   // Initialize nodes
   const initNodes = useCallback((w: number, h: number) => {
@@ -430,6 +439,8 @@ export default function GraphPage() {
     mouseRef.current = { x: -9999, y: -9999, prevX: -9999, prevY: -9999, speed: 0 };
     hoveredNodeRef.current = null;
   }, []);
+
+  if (authLoading || !session) return null;
 
   return (
     <div className="h-[calc(100vh-8rem)] md:h-[calc(100vh-4rem)] flex flex-col">
