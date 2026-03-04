@@ -203,6 +203,10 @@ export default function NotesPage() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const animFrameRef = useRef<number | null>(null);
 
   // Auto-scroll to bottom when messages update
   useEffect(() => {
@@ -215,9 +219,49 @@ export default function NotesPage() {
 
   const hasStarted = messages.length > 0 || isProcessing;
 
+  const drawWaveform = () => {
+    const analyser = analyserRef.current;
+    const canvas = canvasRef.current;
+    if (!analyser || !canvas) return;
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    const bufferLength = analyser.fftSize;
+    const dataArray = new Uint8Array(bufferLength);
+
+    const draw = () => {
+      animFrameRef.current = requestAnimationFrame(draw);
+      analyser.getByteTimeDomainData(dataArray);
+
+      const { width, height } = canvas;
+      ctx.clearRect(0, 0, width, height);
+
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = "#a78bfa"; // violet-400
+      ctx.beginPath();
+
+      const sliceWidth = width / bufferLength;
+      let x = 0;
+      for (let i = 0; i < bufferLength; i++) {
+        const v = dataArray[i] / 128.0;
+        const y = (v * height) / 2;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+        x += sliceWidth;
+      }
+      ctx.lineTo(width, height / 2);
+      ctx.stroke();
+    };
+
+    draw();
+  };
+
   const handleRecord = async () => {
     if (isRecording) {
       // Stop recording
+      if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
+      audioCtxRef.current?.close();
       mediaRecorderRef.current?.stop();
       setIsRecording(false);
     } else {
@@ -225,6 +269,15 @@ export default function NotesPage() {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         audioChunksRef.current = [];
+
+        // Wire up analyser for waveform
+        const audioCtx = new AudioContext();
+        const analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 1024;
+        audioCtx.createMediaStreamSource(stream).connect(analyser);
+        analyserRef.current = analyser;
+        audioCtxRef.current = audioCtx;
+
         const recorder = new MediaRecorder(stream);
 
         recorder.ondataavailable = (e) => {
@@ -258,6 +311,9 @@ export default function NotesPage() {
         recorder.start();
         mediaRecorderRef.current = recorder;
         setIsRecording(true);
+
+        // Start drawing after state update
+        setTimeout(drawWaveform, 50);
       } catch {
         // Microphone permission denied — ignore
       }
@@ -386,14 +442,28 @@ export default function NotesPage() {
       )}
 
       <div className="bg-gray-900 border border-gray-800/60 rounded-2xl px-4 py-3 focus-within:border-violet-500/40 focus-within:ring-1 focus-within:ring-violet-500/15 transition-all">
-        {/* Recording / transcribing indicator */}
-        {(isRecording || isTranscribing) && (
+        {/* Waveform canvas — shown while recording */}
+        {isRecording && (
+          <div className="mb-3">
+            <div className="flex items-center gap-2 mb-2">
+              <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+              <span className="text-xs text-red-400 font-medium">Recording…</span>
+              <span className="text-xs text-gray-600 ml-auto">Tap mic to stop</span>
+            </div>
+            <canvas
+              ref={canvasRef}
+              width={560}
+              height={48}
+              className="w-full h-12 rounded-lg bg-gray-800/40"
+            />
+          </div>
+        )}
+
+        {/* Transcribing indicator */}
+        {isTranscribing && (
           <div className="flex items-center gap-2 mb-3">
-            <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-            <span className="text-xs text-red-400 font-medium">
-              {isTranscribing ? "Transcribing…" : "Recording…"}
-            </span>
-            {isRecording && <span className="text-xs text-gray-600 ml-auto">Tap mic to stop</span>}
+            <span className="w-3.5 h-3.5 border-2 border-violet-400/30 border-t-violet-400 rounded-full animate-spin" />
+            <span className="text-xs text-violet-400 font-medium">Transcribing…</span>
           </div>
         )}
 
