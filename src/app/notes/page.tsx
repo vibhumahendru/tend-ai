@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { API_BASE, authedFetch, authedFormFetch } from "@/lib/api";
 import { useAuth } from "@/components/AuthProvider";
+import { formatDueDate } from "@/lib/dates";
 
 // --- Typing prompts ---
 
@@ -685,7 +686,7 @@ export default function NotesPage() {
                           <div className="flex-1 min-w-0">
                             <p className="text-sm text-gray-200 leading-snug">{task.title}</p>
                             {task.due_date && (
-                              <p className="text-[11px] text-gray-500 mt-0.5">{task.due_date}</p>
+                              <p className="text-[11px] text-gray-500 mt-0.5">{formatDueDate(task.due_date)}</p>
                             )}
                           </div>
                           <div className="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">

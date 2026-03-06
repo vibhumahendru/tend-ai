@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { API_BASE, authedFetch, authedFormFetch } from "@/lib/api";
 import { useAuth } from "@/components/AuthProvider";
+import { formatDueDate } from "@/lib/dates";
 
 // --- Types ---
 
@@ -79,13 +80,13 @@ export default function TasksPage() {
   const [processingLabel, setProcessingLabel] = useState<string>("");
   const [highlightedTask, setHighlightedTask] = useState<{ id: string; fields: string[] } | null>(null);
 
-  // Recording refs — single set, reused per task
+  // Recording refs
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const animFrameRef = useRef<number | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
     if (!session) return;
@@ -116,9 +117,9 @@ export default function TasksPage() {
 
   if (loading || !session) return null;
 
-  // --- Waveform ---
+  // --- Mini waveform: draws 5 real-voice bars onto a tiny canvas ---
 
-  const drawWaveform = () => {
+  const drawMiniWaveform = () => {
     const analyser = analyserRef.current;
     const canvas = canvasRef.current;
     if (!analyser || !canvas) return;
@@ -126,31 +127,32 @@ export default function TasksPage() {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    const bufferLength = analyser.fftSize;
-    const dataArray = new Uint8Array(bufferLength);
+    const freqData = new Uint8Array(analyser.frequencyBinCount);
+    const bars = 5;
+    const barW = 2;
+    const gap = 1;
+    const totalW = bars * barW + (bars - 1) * gap; // 14
+    const h = canvas.height; // 14
 
     const draw = () => {
       animFrameRef.current = requestAnimationFrame(draw);
-      analyser.getByteTimeDomainData(dataArray);
+      analyser.getByteFrequencyData(freqData);
 
-      const { width, height } = canvas;
-      ctx.clearRect(0, 0, width, height);
+      ctx.clearRect(0, 0, canvas.width, h);
 
-      ctx.lineWidth = 2;
-      ctx.strokeStyle = "#a78bfa";
-      ctx.beginPath();
+      // Sample 5 frequency bands spread across the low-mid range
+      const step = Math.floor(freqData.length / (bars + 1));
+      for (let i = 0; i < bars; i++) {
+        const val = freqData[step * (i + 1)] / 255; // 0-1
+        const barH = Math.max(2, val * h);
+        const x = i * (barW + gap) + (canvas.width - totalW) / 2;
+        const y = (h - barH) / 2;
 
-      const sliceWidth = width / bufferLength;
-      let x = 0;
-      for (let i = 0; i < bufferLength; i++) {
-        const v = dataArray[i] / 128.0;
-        const y = (v * height) / 2;
-        if (i === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
-        x += sliceWidth;
+        ctx.fillStyle = "#f87171"; // red-400
+        ctx.beginPath();
+        ctx.roundRect(x, y, barW, barH, 1);
+        ctx.fill();
       }
-      ctx.lineTo(width, height / 2);
-      ctx.stroke();
     };
 
     draw();
@@ -182,7 +184,7 @@ export default function TasksPage() {
 
       const audioCtx = new AudioContext();
       const analyser = audioCtx.createAnalyser();
-      analyser.fftSize = 1024;
+      analyser.fftSize = 64;
       audioCtx.createMediaStreamSource(stream).connect(analyser);
       analyserRef.current = analyser;
       audioCtxRef.current = audioCtx;
@@ -251,7 +253,7 @@ export default function TasksPage() {
       recorder.start(1000);
       mediaRecorderRef.current = recorder;
       setRecordingTaskId(taskId);
-      setTimeout(drawWaveform, 50);
+      setTimeout(drawMiniWaveform, 50);
     } catch {
       // Microphone permission denied
     }
@@ -430,32 +432,15 @@ export default function TasksPage() {
                         <p className={`text-[11px] mt-0.5 transition-colors duration-500 ${
                           highlightFields.includes("due_date") ? "text-violet-400" : "text-gray-600"
                         }`}>
-                          {task.due_date}
+                          {formatDueDate(task.due_date)}
                         </p>
                       )}
 
-                      {/* Waveform — inline, below title */}
-                      {isRecordingThis && (
-                        <div className="mt-2">
-                          <div className="flex items-center gap-2 mb-1">
-                            <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-                            <span className="text-xs text-red-400 font-medium">Recording…</span>
-                            <span className="text-xs text-gray-600 ml-auto">Tap mic to stop</span>
-                          </div>
-                          <canvas
-                            ref={canvasRef}
-                            width={400}
-                            height={36}
-                            className="w-full h-9 rounded-lg bg-gray-800/40"
-                          />
-                        </div>
-                      )}
-
-                      {/* Processing state */}
+                      {/* Processing state — small inline label */}
                       {isProcessingThis && (
-                        <div className="flex items-center gap-2 mt-2">
-                          <span className="w-3.5 h-3.5 border-2 border-violet-400/30 border-t-violet-400 rounded-full animate-spin" />
-                          <span className="text-xs text-violet-400 font-medium">{processingLabel}</span>
+                        <div className="flex items-center gap-1.5 mt-1">
+                          <span className="w-3 h-3 border-2 border-violet-400/30 border-t-violet-400 rounded-full animate-spin" />
+                          <span className="text-[11px] text-violet-400 font-medium">{processingLabel}</span>
                         </div>
                       )}
                     </div>
@@ -473,7 +458,7 @@ export default function TasksPage() {
                         {task.category.toUpperCase()}
                       </span>
 
-                      {/* Mic button */}
+                      {/* Mic / waveform button */}
                       <button
                         onClick={() => handleVoiceRecord(task.id)}
                         disabled={
@@ -490,7 +475,18 @@ export default function TasksPage() {
                             : "text-gray-600 hover:text-violet-400 hover:bg-violet-500/10"
                         }`}
                       >
-                        <MicIcon size={14} />
+                        {isRecordingThis ? (
+                          <canvas
+                            ref={canvasRef}
+                            width={14}
+                            height={14}
+                            className="w-[14px] h-[14px]"
+                          />
+                        ) : isProcessingThis ? (
+                          <span className="w-3.5 h-3.5 border-2 border-violet-400/30 border-t-violet-400 rounded-full animate-spin block" />
+                        ) : (
+                          <MicIcon size={14} />
+                        )}
                       </button>
                     </div>
                   </div>
