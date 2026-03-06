@@ -38,3 +38,24 @@ export function formatDueDate(isoString: string): string {
 
   return `${dayOfWeek} ${day}${suffix} ${month} ${time}`;
 }
+
+/**
+ * Returns the urgency status of a due date:
+ * - "overdue"  — past its due date
+ * - "due-soon" — due within the next 48 hours
+ * - "normal"   — more than 48 hours away
+ */
+export function getDueDateStatus(
+  isoString: string
+): "overdue" | "due-soon" | "normal" {
+  const d = new Date(isoString);
+  if (isNaN(d.getTime())) return "normal";
+
+  const now = new Date();
+  if (d.getTime() < now.getTime()) return "overdue";
+
+  const hoursAway = (d.getTime() - now.getTime()) / (1000 * 60 * 60);
+  if (hoursAway <= 48) return "due-soon";
+
+  return "normal";
+}

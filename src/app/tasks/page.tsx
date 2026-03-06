@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { API_BASE, authedFetch, authedFormFetch } from "@/lib/api";
 import { useAuth } from "@/components/AuthProvider";
-import { formatDueDate } from "@/lib/dates";
+import { formatDueDate, getDueDateStatus } from "@/lib/dates";
 
 // --- Types ---
 
@@ -19,7 +19,6 @@ interface Task {
 }
 
 type Category = "all" | "work" | "admin" | "personal" | "ideas";
-type SortMode = "newest" | "urgency";
 
 // --- Style maps ---
 
@@ -35,8 +34,6 @@ const categoryStyles: Record<string, string> = {
   personal: "bg-pink-500/15 text-pink-400 border-pink-500/30",
   ideas: "bg-violet-500/15 text-violet-400 border-violet-500/30",
 };
-
-const urgencyOrder: Record<string, number> = { high: 0, neutral: 1, low: 2 };
 
 const categoryIcons: Record<string, string> = {
   all: "◈",
@@ -72,7 +69,6 @@ export default function TasksPage() {
   const [isFetching, setIsFetching] = useState(true);
   const [activeCategory, setActiveCategory] = useState<Category>("all");
   const [activeTab, setActiveTab] = useState<"pending" | "complete">("pending");
-  const [sortMode, setSortMode] = useState<SortMode>("newest");
 
   // Voice editing state — single set, shared across all tasks
   const [recordingTaskId, setRecordingTaskId] = useState<string | null>(null);
@@ -265,13 +261,21 @@ export default function TasksPage() {
   const pendingCount = (cat: Category) =>
     cat === "all" ? pendingTasks.length : pendingTasks.filter((t) => t.category === cat).length;
 
+  // Sort: tasks with due dates soonest first, no-date tasks at the bottom
+  const sortByDueDate = (a: Task, b: Task) => {
+    const aDate = a.due_date ? new Date(a.due_date).getTime() : Infinity;
+    const bDate = b.due_date ? new Date(b.due_date).getTime() : Infinity;
+    if (aDate !== bDate) return aDate - bDate;
+    // Tie-break by created_at (newest first)
+    return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+  };
+
   const filtered = tasks
     .filter((t) => t.status === activeTab)
-    .filter((t) => activeCategory === "all" || t.category === activeCategory)
-    .sort((a, b) => {
-      if (sortMode === "urgency") return urgencyOrder[a.urgency] - urgencyOrder[b.urgency];
-      return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
-    });
+    .filter((t) => activeCategory === "all" || t.category === activeCategory);
+
+  const highTasks = filtered.filter((t) => t.urgency === "high").sort(sortByDueDate);
+  const otherTasks = filtered.filter((t) => t.urgency !== "high").sort(sortByDueDate);
 
   const toggleStatus = async (task: Task) => {
     const newStatus = task.status === "pending" ? "complete" : "pending";
@@ -288,6 +292,109 @@ export default function TasksPage() {
   };
 
   const categories: Category[] = ["all", "work", "admin", "personal", "ideas"];
+
+  const renderTaskRow = (task: Task) => {
+    const isRecordingThis = recordingTaskId === task.id;
+    const isProcessingThis = processingTaskId === task.id;
+    const isHighlighted = highlightedTask?.id === task.id;
+    const highlightFields = highlightedTask?.id === task.id ? highlightedTask.fields : [];
+    const isBusy = isRecordingThis || isProcessingThis;
+
+    return (
+      <div
+        key={task.id}
+        className={`flex items-start gap-3 px-4 py-4 bg-gray-900 hover:bg-gray-900/80 transition-all duration-500 ${
+          task.status === "complete" ? "opacity-50" : ""
+        } ${isHighlighted ? "ring-1 ring-violet-500/40 bg-violet-500/5" : ""}`}
+      >
+        {/* Checkbox */}
+        <input
+          type="checkbox"
+          checked={task.status === "complete"}
+          onChange={() => toggleStatus(task)}
+          className="mt-0.5 w-4 h-4 accent-violet-500 cursor-pointer shrink-0"
+        />
+
+        {/* Content */}
+        <div className="flex-1 min-w-0">
+          <p className={`text-sm leading-snug transition-colors duration-500 ${
+            task.status === "complete" ? "line-through text-gray-500" : "text-gray-200"
+          } ${highlightFields.includes("title") ? "text-violet-300" : ""}`}>
+            {task.title}
+          </p>
+          {task.due_date && (() => {
+            const dateStatus = getDueDateStatus(task.due_date);
+            const colorClass = highlightFields.includes("due_date")
+              ? "text-violet-400"
+              : dateStatus === "overdue"
+              ? "text-red-400"
+              : dateStatus === "due-soon"
+              ? "text-orange-400"
+              : "text-gray-600";
+            return (
+              <p className={`text-[11px] mt-0.5 transition-colors duration-500 ${colorClass}`}>
+                {formatDueDate(task.due_date)}
+                {dateStatus === "overdue" && <span className="ml-1">— Overdue</span>}
+              </p>
+            );
+          })()}
+
+          {/* Processing state — small inline label */}
+          {isProcessingThis && (
+            <div className="flex items-center gap-1.5 mt-1">
+              <span className="w-3 h-3 border-2 border-violet-400/30 border-t-violet-400 rounded-full animate-spin" />
+              <span className="text-[11px] text-violet-400 font-medium">{processingLabel}</span>
+            </div>
+          )}
+        </div>
+
+        {/* Badges + mic */}
+        <div className="flex gap-1.5 shrink-0 flex-wrap justify-end items-center">
+          <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full border transition-all duration-500 ${
+            urgencyStyles[task.urgency]
+          } ${highlightFields.includes("urgency") ? "ring-1 ring-violet-400/60" : ""}`}>
+            {task.urgency.toUpperCase()}
+          </span>
+          <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full border transition-all duration-500 ${
+            categoryStyles[task.category]
+          } ${highlightFields.includes("category") ? "ring-1 ring-violet-400/60" : ""}`}>
+            {task.category.toUpperCase()}
+          </span>
+
+          {/* Mic / waveform button */}
+          <button
+            onClick={() => handleVoiceRecord(task.id)}
+            disabled={
+              (recordingTaskId !== null && recordingTaskId !== task.id) ||
+              isProcessingThis ||
+              (processingTaskId !== null && processingTaskId !== task.id)
+            }
+            title={isRecordingThis ? "Stop recording" : "Voice edit"}
+            className={`p-1.5 rounded-lg transition-colors ml-0.5 disabled:opacity-30 ${
+              isRecordingThis
+                ? "bg-red-500/15 text-red-400 border border-red-500/30"
+                : isBusy
+                ? "text-gray-600"
+                : "text-gray-600 hover:text-violet-400 hover:bg-violet-500/10"
+            }`}
+          >
+            {isRecordingThis ? (
+              <canvas
+                ref={canvasRef}
+                width={14}
+                height={14}
+                className="w-[14px] h-[14px]"
+              />
+            ) : isProcessingThis ? (
+              <span className="w-3.5 h-3.5 border-2 border-violet-400/30 border-t-violet-400 rounded-full animate-spin block" />
+            ) : (
+              <MicIcon size={14} />
+            )}
+          </button>
+        </div>
+      </div>
+    );
+  };
 
   const sidebar = (
     <nav className="flex flex-col gap-0.5">
@@ -371,16 +478,6 @@ export default function TasksPage() {
             New Task
           </button>
 
-          {/* Sort toggle */}
-          <button
-            onClick={() => setSortMode((s) => (s === "newest" ? "urgency" : "newest"))}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-gray-500 hover:text-gray-300 border border-gray-800/60 hover:border-gray-700/60 transition-colors"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M3 6h18M7 12h10M11 18h2" />
-            </svg>
-            {sortMode === "newest" ? "Newest" : "Urgency"}
-          </button>
         </div>
 
         {/* Task list */}
@@ -398,100 +495,44 @@ export default function TasksPage() {
               </p>
             </div>
           ) : (
-            <div className="flex flex-col divide-y divide-gray-800/40 border border-gray-800/50 rounded-xl overflow-hidden">
-              {filtered.map((task) => {
-                const isRecordingThis = recordingTaskId === task.id;
-                const isProcessingThis = processingTaskId === task.id;
-                const isHighlighted = highlightedTask?.id === task.id;
-                const highlightFields = highlightedTask?.id === task.id ? highlightedTask.fields : [];
-                const isBusy = isRecordingThis || isProcessingThis;
-
-                return (
-                  <div
-                    key={task.id}
-                    className={`flex items-start gap-3 px-4 py-4 bg-gray-900 hover:bg-gray-900/80 transition-all duration-500 ${
-                      task.status === "complete" ? "opacity-50" : ""
-                    } ${isHighlighted ? "ring-1 ring-violet-500/40 bg-violet-500/5" : ""}`}
-                  >
-                    {/* Checkbox */}
-                    <input
-                      type="checkbox"
-                      checked={task.status === "complete"}
-                      onChange={() => toggleStatus(task)}
-                      className="mt-0.5 w-4 h-4 accent-violet-500 cursor-pointer shrink-0"
-                    />
-
-                    {/* Content */}
-                    <div className="flex-1 min-w-0">
-                      <p className={`text-sm leading-snug transition-colors duration-500 ${
-                        task.status === "complete" ? "line-through text-gray-500" : "text-gray-200"
-                      } ${highlightFields.includes("title") ? "text-violet-300" : ""}`}>
-                        {task.title}
-                      </p>
-                      {task.due_date && (
-                        <p className={`text-[11px] mt-0.5 transition-colors duration-500 ${
-                          highlightFields.includes("due_date") ? "text-violet-400" : "text-gray-600"
-                        }`}>
-                          {formatDueDate(task.due_date)}
-                        </p>
-                      )}
-
-                      {/* Processing state — small inline label */}
-                      {isProcessingThis && (
-                        <div className="flex items-center gap-1.5 mt-1">
-                          <span className="w-3 h-3 border-2 border-violet-400/30 border-t-violet-400 rounded-full animate-spin" />
-                          <span className="text-[11px] text-violet-400 font-medium">{processingLabel}</span>
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Badges + mic */}
-                    <div className="flex gap-1.5 shrink-0 flex-wrap justify-end items-center">
-                      <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full border transition-all duration-500 ${
-                        urgencyStyles[task.urgency]
-                      } ${highlightFields.includes("urgency") ? "ring-1 ring-violet-400/60" : ""}`}>
-                        {task.urgency.toUpperCase()}
-                      </span>
-                      <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full border transition-all duration-500 ${
-                        categoryStyles[task.category]
-                      } ${highlightFields.includes("category") ? "ring-1 ring-violet-400/60" : ""}`}>
-                        {task.category.toUpperCase()}
-                      </span>
-
-                      {/* Mic / waveform button */}
-                      <button
-                        onClick={() => handleVoiceRecord(task.id)}
-                        disabled={
-                          (recordingTaskId !== null && recordingTaskId !== task.id) ||
-                          isProcessingThis ||
-                          (processingTaskId !== null && processingTaskId !== task.id)
-                        }
-                        title={isRecordingThis ? "Stop recording" : "Voice edit"}
-                        className={`p-1.5 rounded-lg transition-colors ml-0.5 disabled:opacity-30 ${
-                          isRecordingThis
-                            ? "bg-red-500/15 text-red-400 border border-red-500/30"
-                            : isBusy
-                            ? "text-gray-600"
-                            : "text-gray-600 hover:text-violet-400 hover:bg-violet-500/10"
-                        }`}
-                      >
-                        {isRecordingThis ? (
-                          <canvas
-                            ref={canvasRef}
-                            width={14}
-                            height={14}
-                            className="w-[14px] h-[14px]"
-                          />
-                        ) : isProcessingThis ? (
-                          <span className="w-3.5 h-3.5 border-2 border-violet-400/30 border-t-violet-400 rounded-full animate-spin block" />
-                        ) : (
-                          <MicIcon size={14} />
-                        )}
-                      </button>
-                    </div>
+            <div className="flex flex-col gap-6">
+              {/* --- High urgency section --- */}
+              <section>
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
+                  <h3 className="text-xs font-semibold text-red-400 uppercase tracking-wider">Urgent</h3>
+                  {highTasks.length > 0 && (
+                    <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-red-500/15 text-red-400">
+                      {highTasks.length}
+                    </span>
+                  )}
+                </div>
+                {highTasks.length === 0 ? (
+                  <div className="border border-dashed border-gray-800/60 rounded-xl px-4 py-6 flex items-center justify-center">
+                    <p className="text-gray-600 text-xs">No urgent tasks</p>
                   </div>
-                );
-              })}
+                ) : (
+                  <div className="flex flex-col divide-y divide-gray-800/40 border border-red-500/15 rounded-xl overflow-hidden">
+                    {highTasks.map((task) => renderTaskRow(task))}
+                  </div>
+                )}
+              </section>
+
+              {/* --- Other tasks section --- */}
+              {otherTasks.length > 0 && (
+                <section>
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="w-1.5 h-1.5 rounded-full bg-gray-600" />
+                    <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Other Tasks</h3>
+                    <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-gray-800 text-gray-500">
+                      {otherTasks.length}
+                    </span>
+                  </div>
+                  <div className="flex flex-col divide-y divide-gray-800/40 border border-gray-800/50 rounded-xl overflow-hidden">
+                    {otherTasks.map((task) => renderTaskRow(task))}
+                  </div>
+                </section>
+              )}
             </div>
           )}
         </div>
