@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { API_BASE, authedFetch, authedFormFetch } from "@/lib/api";
 import { useAuth } from "@/components/AuthProvider";
 import { formatDueDate } from "@/lib/dates";
@@ -186,6 +187,16 @@ function PersonCard({
           ))}
         </div>
       )}
+
+      <div className="flex items-center justify-between mt-3 pt-3 border-t border-gray-800/40">
+        <p className="text-[11px] text-gray-600 truncate mr-3">Saved to profile</p>
+        <Link
+          href={`/people/${person.id}`}
+          className="px-3 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-[11px] font-medium transition-colors shrink-0"
+        >
+          View
+        </Link>
+      </div>
     </div>
   );
 }
