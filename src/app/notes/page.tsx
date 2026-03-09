@@ -70,6 +70,7 @@ interface ParsedPerson {
 
 interface ParsedTask {
   title: string;
+  description: string;
   due_date: string | null;
   urgency: "low" | "neutral" | "high";
   category: "work" | "admin" | "personal" | "ideas";
@@ -683,8 +684,14 @@ export default function NotesPage() {
                           key={task.id}
                           className={`flex items-start gap-3 px-4 py-3.5 ${j > 0 ? "border-t border-gray-800/40" : ""}`}
                         >
-                          <div className="flex-1 min-w-0">
+                          <div
+                            className="flex-1 min-w-0 cursor-pointer"
+                            onClick={() => router.push(`/tasks?highlight=${task.id}`)}
+                          >
                             <p className="text-sm text-gray-200 leading-snug">{task.title}</p>
+                            {task.description && (
+                              <p className="text-[11px] text-gray-500 mt-0.5 line-clamp-1">{task.description}</p>
+                            )}
                             {task.due_date && (
                               <p className="text-[11px] text-gray-500 mt-0.5">{formatDueDate(task.due_date)}</p>
                             )}

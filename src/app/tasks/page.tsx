@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
-import { useRouter } from "next/navigation";
+import { useState, useEffect, useRef, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { API_BASE, authedFetch, authedFormFetch } from "@/lib/api";
 import { useAuth } from "@/components/AuthProvider";
 import { formatDueDate, getDueDateStatus } from "@/lib/dates";
@@ -11,6 +11,7 @@ import { formatDueDate, getDueDateStatus } from "@/lib/dates";
 interface Task {
   id: string;
   title: string;
+  description: string;
   due_date: string | null;
   urgency: "low" | "neutral" | "high";
   category: "work" | "admin" | "personal" | "ideas";
@@ -58,8 +59,17 @@ function MicIcon({ size = 20 }: { size?: number }) {
 // --- Component ---
 
 export default function TasksPage() {
+  return (
+    <Suspense>
+      <TasksContent />
+    </Suspense>
+  );
+}
+
+function TasksContent() {
   const { session, loading } = useAuth();
   const router = useRouter();
+  const searchParams = useSearchParams();
 
   useEffect(() => {
     if (!loading && !session) router.push("/login");
@@ -69,12 +79,25 @@ export default function TasksPage() {
   const [isFetching, setIsFetching] = useState(true);
   const [activeCategory, setActiveCategory] = useState<Category>("all");
   const [activeTab, setActiveTab] = useState<"pending" | "complete">("pending");
+  const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
 
   // Voice editing state — single set, shared across all tasks
   const [recordingTaskId, setRecordingTaskId] = useState<string | null>(null);
   const [processingTaskId, setProcessingTaskId] = useState<string | null>(null);
   const [processingLabel, setProcessingLabel] = useState<string>("");
   const [highlightedTask, setHighlightedTask] = useState<{ id: string; fields: string[] } | null>(null);
+
+  // Handle ?highlight=<taskId> from notes page navigation
+  useEffect(() => {
+    const highlightId = searchParams.get("highlight");
+    if (highlightId && !isFetching) {
+      setExpandedTaskId(highlightId);
+      setHighlightedTask({ id: highlightId, fields: [] });
+      setTimeout(() => setHighlightedTask(null), 3000);
+      // Clean URL without re-render
+      window.history.replaceState(null, "", "/tasks");
+    }
+  }, [searchParams, isFetching]);
 
   // Recording refs
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -208,24 +231,12 @@ export default function TasksPage() {
         const formData = new FormData();
         formData.append("audio", blob, `recording.${ext}`);
 
-        // Step 1: Transcribe
         setProcessingTaskId(taskId);
-        setProcessingLabel("Transcribing\u2026");
+        setProcessingLabel("Updating\u2026");
         try {
-          const transcribeRes = await authedFormFetch(
-            `${API_BASE}/tend/transcribe/`,
+          const updateRes = await authedFormFetch(
+            `${API_BASE}/tend/tasks/${taskId}/voice-update-direct/`,
             formData,
-            session!.access_token
-          );
-          if (!transcribeRes.ok) { setProcessingTaskId(null); return; }
-          const { text } = await transcribeRes.json();
-          if (!text?.trim()) { setProcessingTaskId(null); return; }
-
-          // Step 2: Voice update
-          setProcessingLabel("Updating\u2026");
-          const updateRes = await authedFetch(
-            `${API_BASE}/tend/tasks/${taskId}/voice-update/`,
-            { method: "POST", body: JSON.stringify({ voice_text: text }) },
             session!.access_token
           );
           if (!updateRes.ok) { setProcessingTaskId(null); return; }
@@ -299,57 +310,68 @@ export default function TasksPage() {
     const isHighlighted = highlightedTask?.id === task.id;
     const highlightFields = highlightedTask?.id === task.id ? highlightedTask.fields : [];
     const isBusy = isRecordingThis || isProcessingThis;
+    const isExpanded = expandedTaskId === task.id;
 
     return (
       <div
         key={task.id}
-        className={`flex items-start gap-3 px-4 py-4 bg-gray-900 hover:bg-gray-900/80 transition-all duration-500 ${
+        className={`flex flex-col md:flex-row md:items-start md:gap-3 px-3 md:px-4 py-3 bg-gray-900 hover:bg-gray-900/80 transition-all duration-500 ${
           task.status === "complete" ? "opacity-50" : ""
-        } ${isHighlighted ? "ring-1 ring-violet-500/40 bg-violet-500/5" : ""}`}
+        } ${isHighlighted ? "ring-1 ring-emerald-500/40 bg-emerald-500/5" : ""}`}
       >
-        {/* Checkbox */}
-        <input
-          type="checkbox"
-          checked={task.status === "complete"}
-          onChange={() => toggleStatus(task)}
-          className="mt-0.5 w-4 h-4 accent-violet-500 cursor-pointer shrink-0"
-        />
+        {/* Top row: checkbox + title (always horizontal) */}
+        <div className="flex items-start gap-3 flex-1 min-w-0">
+          <input
+            type="checkbox"
+            checked={task.status === "complete"}
+            onChange={() => toggleStatus(task)}
+            className="mt-0.5 w-4 h-4 accent-violet-500 cursor-pointer shrink-0"
+          />
 
-        {/* Content */}
-        <div className="flex-1 min-w-0">
-          <p className={`text-sm leading-snug transition-colors duration-500 ${
-            task.status === "complete" ? "line-through text-gray-500" : "text-gray-200"
-          } ${highlightFields.includes("title") ? "text-violet-300" : ""}`}>
-            {task.title}
-          </p>
-          {task.due_date && (() => {
-            const dateStatus = getDueDateStatus(task.due_date);
-            const colorClass = highlightFields.includes("due_date")
-              ? "text-violet-400"
-              : dateStatus === "overdue"
-              ? "text-red-400"
-              : dateStatus === "due-soon"
-              ? "text-orange-400"
-              : "text-gray-600";
-            return (
-              <p className={`text-[11px] mt-0.5 transition-colors duration-500 ${colorClass}`}>
-                {formatDueDate(task.due_date)}
-                {dateStatus === "overdue" && <span className="ml-1">— Overdue</span>}
+          <div
+            className="flex-1 min-w-0 cursor-pointer"
+            onClick={() => setExpandedTaskId(isExpanded ? null : task.id)}
+          >
+            <p className={`text-sm leading-snug transition-colors duration-500 ${
+              task.status === "complete" ? "line-through text-gray-500" : "text-gray-200"
+            } ${highlightFields.includes("title") ? "text-violet-300" : ""}`}>
+              {task.title}
+            </p>
+            {task.description && (
+              <p className={`text-[11px] text-gray-500 mt-0.5 transition-colors duration-500 ${
+                isExpanded ? "" : "line-clamp-1"
+              } ${highlightFields.includes("description") ? "text-violet-400" : ""}`}>
+                {task.description}
               </p>
-            );
-          })()}
+            )}
+            {task.due_date && (() => {
+              const dateStatus = getDueDateStatus(task.due_date);
+              const colorClass = highlightFields.includes("due_date")
+                ? "text-violet-400"
+                : dateStatus === "overdue"
+                ? "text-red-400"
+                : dateStatus === "due-soon"
+                ? "text-orange-400"
+                : "text-gray-600";
+              return (
+                <p className={`text-[11px] mt-0.5 transition-colors duration-500 ${colorClass}`}>
+                  {formatDueDate(task.due_date)}
+                  {dateStatus === "overdue" && <span className="ml-1">— Overdue</span>}
+                </p>
+              );
+            })()}
 
-          {/* Processing state — small inline label */}
-          {isProcessingThis && (
-            <div className="flex items-center gap-1.5 mt-1">
-              <span className="w-3 h-3 border-2 border-violet-400/30 border-t-violet-400 rounded-full animate-spin" />
-              <span className="text-[11px] text-violet-400 font-medium">{processingLabel}</span>
-            </div>
-          )}
+            {isProcessingThis && (
+              <div className="flex items-center gap-1.5 mt-1">
+                <span className="w-3 h-3 border-2 border-violet-400/30 border-t-violet-400 rounded-full animate-spin" />
+                <span className="text-[11px] text-violet-400 font-medium">{processingLabel}</span>
+              </div>
+            )}
+          </div>
         </div>
 
-        {/* Badges + mic */}
-        <div className="flex gap-1.5 shrink-0 flex-wrap justify-end items-center">
+        {/* Bottom row on mobile, right column on desktop */}
+        <div className="flex gap-1.5 items-center mt-2 md:mt-0 ml-7 md:ml-0 shrink-0">
           <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full border transition-all duration-500 ${
             urgencyStyles[task.urgency]
           } ${highlightFields.includes("urgency") ? "ring-1 ring-violet-400/60" : ""}`}>
@@ -361,7 +383,6 @@ export default function TasksPage() {
             {task.category.toUpperCase()}
           </span>
 
-          {/* Mic / waveform button */}
           <button
             onClick={() => handleVoiceRecord(task.id)}
             disabled={
@@ -436,12 +457,12 @@ export default function TasksPage() {
       {/* Main content */}
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* Top bar */}
-        <div className="flex items-center gap-3 px-4 md:px-6 py-4 border-b border-gray-800/50">
+        <div className="flex flex-wrap items-center gap-2 md:gap-3 px-2 md:px-6 py-3 md:py-4 border-b border-gray-800/50">
           {/* Mobile category dropdown */}
           <select
             value={activeCategory}
             onChange={(e) => setActiveCategory(e.target.value as Category)}
-            className="md:hidden bg-gray-900 border border-gray-700/50 text-gray-300 text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:border-violet-500/50"
+            className="md:hidden bg-gray-900 border border-gray-700/50 text-gray-300 text-sm rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-violet-500/50"
           >
             {categories.map((cat) => (
               <option key={cat} value={cat}>
@@ -470,7 +491,7 @@ export default function TasksPage() {
           {/* New Task CTA */}
           <button
             onClick={() => router.push("/notes")}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-violet-600 hover:bg-violet-500 text-white transition-colors"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-violet-600 hover:bg-violet-500 text-white transition-colors shrink-0"
           >
             <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
               <path d="M12 5v14M5 12h14" />
@@ -481,7 +502,7 @@ export default function TasksPage() {
         </div>
 
         {/* Task list */}
-        <div className="flex-1 overflow-y-auto px-4 md:px-6 py-4">
+        <div className="flex-1 overflow-y-auto px-2 md:px-6 py-4">
           {isFetching ? (
             <div className="flex items-center justify-center h-32">
               <span className="w-5 h-5 border-2 border-violet-400/30 border-t-violet-400 rounded-full animate-spin" />
