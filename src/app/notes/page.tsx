@@ -80,11 +80,17 @@ interface ParsedTask {
 interface SavedTask extends ParsedTask { id: string; }
 interface SavedPerson extends ParsedPerson { id: string; }
 
+interface DisambiguationItem {
+  person: ParsedPerson;
+  candidates: SavedPerson[];
+}
+
 type ChatMessage =
   | { role: "user"; text: string }
   | { role: "notes"; people: SavedPerson[]; error?: string }
   | { role: "tasks"; tasks: SavedTask[] }
-  | { role: "ambiguous"; pendingText: string; tasks: ParsedTask[]; people: ParsedPerson[] };
+  | { role: "ambiguous"; pendingText: string; tasks: ParsedTask[]; people: ParsedPerson[] }
+  | { role: "disambiguate"; items: DisambiguationItem[]; savedAlongside: SavedPerson[] };
 
 // --- Style maps ---
 
@@ -250,6 +256,9 @@ export default function NotesPage() {
         });
       } else if (m.role === "ambiguous") {
         result.push({ role: "assistant", content: "[Asked user to clarify intent]" });
+      } else if (m.role === "disambiguate") {
+        const names = [...m.savedAlongside.map((p) => p.name), ...m.items.map((d) => d.person.name)];
+        result.push({ role: "assistant", content: `[Saving/resolving contacts: ${names.join(", ")}]` });
       }
     }
     return result;
@@ -294,23 +303,22 @@ export default function NotesPage() {
   };
 
   // Auto-save helpers called from handleSubmit
-  const saveContacts = async (people: ParsedPerson[]): Promise<SavedPerson[]> => {
+  const saveContacts = async (people: ParsedPerson[]): Promise<{ saved: SavedPerson[]; needsDisambiguation: DisambiguationItem[] }> => {
     const res = await authedFetch(
       `${API_BASE}/tend/save-contacts/`,
       { method: "POST", body: JSON.stringify({ people }) },
       session.access_token
     );
-    if (!res.ok) return people.map((p) => ({ ...p, id: crypto.randomUUID() }));
+    if (!res.ok) return { saved: people.map((p) => ({ ...p, id: crypto.randomUUID() })), needsDisambiguation: [] };
     const data = await res.json();
-    // save-contacts returns ALL contacts — filter to just the ones we saved by name
-    const savedNames = new Set(people.map((p) => p.name.toLowerCase()));
-    const allContacts: SavedPerson[] = data.contacts ?? [];
-    const justSaved = allContacts.filter((c) => savedNames.has(c.name.toLowerCase()));
-    // Enrich with classify data (note_about_them, tags come from classify, not the contact record)
-    return justSaved.map((c) => {
-      const original = people.find((p) => p.name.toLowerCase() === c.name.toLowerCase());
-      return { ...c, ...(original ?? {}) };
-    });
+    const saved: SavedPerson[] = data.saved ?? [];
+    const needsDisambiguation: DisambiguationItem[] = (data.needs_disambiguation ?? []).map(
+      (d: { person: ParsedPerson; candidates: SavedPerson[] }) => ({
+        person: d.person,
+        candidates: d.candidates,
+      })
+    );
+    return { saved, needsDisambiguation };
   };
 
   const saveTasks = async (tasks: ParsedTask[]): Promise<SavedTask[]> => {
@@ -437,8 +445,16 @@ export default function NotesPage() {
         setMessages((prev) => [...prev, { role: "ambiguous", pendingText: note, tasks: rawTasks, people }]);
       } else {
         // notes (default)
-        const saved = await saveContacts(people);
-        setMessages((prev) => [...prev, { role: "notes", people: saved }]);
+        const { saved, needsDisambiguation } = await saveContacts(people);
+        if (needsDisambiguation.length > 0) {
+          // Some contacts saved, some need disambiguation
+          if (saved.length > 0) {
+            setMessages((prev) => [...prev, { role: "notes", people: saved }]);
+          }
+          setMessages((prev) => [...prev, { role: "disambiguate", items: needsDisambiguation, savedAlongside: saved }]);
+        } else {
+          setMessages((prev) => [...prev, { role: "notes", people: saved }]);
+        }
       }
     } catch {
       setMessages((prev) => [...prev, { role: "notes", people: [], error: "Something went wrong. Is the backend running?" }]);
@@ -487,13 +503,61 @@ export default function NotesPage() {
         const saved = await saveTasks(msg.tasks);
         setMessages((prev) => [...prev, { role: "tasks", tasks: saved }]);
       } else {
-        const saved = await saveContacts(msg.people);
-        setMessages((prev) => [...prev, { role: "notes", people: saved }]);
+        const { saved, needsDisambiguation } = await saveContacts(msg.people);
+        if (needsDisambiguation.length > 0) {
+          if (saved.length > 0) {
+            setMessages((prev) => [...prev, { role: "notes", people: saved }]);
+          }
+          setMessages((prev) => [...prev, { role: "disambiguate", items: needsDisambiguation, savedAlongside: saved }]);
+        } else {
+          setMessages((prev) => [...prev, { role: "notes", people: saved }]);
+        }
       }
     } catch {
       // Silently fail
     } finally {
       setIsProcessing(false);
+    }
+  };
+
+  const handleResolveDisambiguation = async (msgIndex: number, itemIndex: number, contactId: string | null) => {
+    const msg = messages[msgIndex];
+    if (msg.role !== "disambiguate") return;
+
+    const item = msg.items[itemIndex];
+    if (!item) return;
+
+    try {
+      const res = await authedFetch(
+        `${API_BASE}/tend/save-contacts/resolve/`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            contact_id: contactId,
+            person: item.person,
+          }),
+        },
+        session.access_token
+      );
+
+      if (!res.ok) return;
+      const data = await res.json();
+      const resolvedContact: SavedPerson = data.contact;
+
+      setMessages((prev) =>
+        prev.map((m, i) => {
+          if (i !== msgIndex || m.role !== "disambiguate") return m;
+          const remainingItems = m.items.filter((_, idx) => idx !== itemIndex);
+          const newSaved = [...m.savedAlongside, resolvedContact];
+          // All resolved → convert to notes message
+          if (remainingItems.length === 0) {
+            return { role: "notes" as const, people: newSaved };
+          }
+          return { ...m, items: remainingItems, savedAlongside: newSaved };
+        })
+      );
+    } catch {
+      // Silently fail
     }
   };
 
@@ -742,6 +806,78 @@ export default function NotesPage() {
                       </button>
                     </div>
                   </div>
+                </div>
+              );
+            }
+
+            // Disambiguation — "Did you mean?" for fuzzy contact matches
+            if (msg.role === "disambiguate") {
+              return (
+                <div key={i} className="flex flex-col gap-4">
+                  {msg.savedAlongside.length > 0 && (
+                    <>
+                      <p className="text-xs text-gray-500 uppercase tracking-wider font-semibold">
+                        {msg.savedAlongside.length} profile{msg.savedAlongside.length !== 1 ? "s" : ""} saved
+                      </p>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {msg.savedAlongside.map((person) => (
+                          <PersonCard key={person.id} person={person} onDelete={() => handleDeleteContact(i, person.id)} />
+                        ))}
+                      </div>
+                    </>
+                  )}
+
+                  {msg.items.map((item, itemIdx) => (
+                    <div key={itemIdx} className="bg-gray-900 border border-amber-500/20 rounded-xl px-4 py-4">
+                      <p className="text-sm text-gray-300 mb-1">
+                        Did you mean <span className="font-semibold text-amber-400">{item.person.name}</span>?
+                      </p>
+                      {item.person.note_about_them && (
+                        <p className="text-xs text-gray-500 mb-3 line-clamp-2">&quot;{item.person.note_about_them}&quot;</p>
+                      )}
+
+                      <div className="flex flex-col gap-2">
+                        {item.candidates.map((candidate) => (
+                          <button
+                            key={candidate.id}
+                            onClick={() => handleResolveDisambiguation(i, itemIdx, candidate.id)}
+                            className="flex items-center gap-3 w-full text-left px-3 py-2.5 rounded-lg bg-gray-800/50 border border-gray-700/40 hover:border-violet-500/40 hover:bg-gray-800 transition-colors"
+                          >
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img
+                              src={`https://api.dicebear.com/9.x/avataaars/svg?seed=${encodeURIComponent(candidate.name)}`}
+                              alt={candidate.name}
+                              width={32}
+                              height={32}
+                              className="rounded-full bg-gray-800 shrink-0"
+                            />
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium text-gray-200">{candidate.name}</p>
+                              <div className="flex gap-1 mt-0.5 flex-wrap">
+                                {candidate.tags.slice(0, 3).map((tag) => (
+                                  <span key={tag} className="px-1.5 py-0 rounded-full bg-violet-500/10 text-violet-400 text-[9px]">
+                                    {tag}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          </button>
+                        ))}
+
+                        <button
+                          onClick={() => handleResolveDisambiguation(i, itemIdx, null)}
+                          className="flex items-center gap-2 w-full text-left px-3 py-2.5 rounded-lg border border-dashed border-gray-700/60 hover:border-violet-500/40 hover:bg-gray-800/30 transition-colors"
+                        >
+                          <span className="w-8 h-8 rounded-full bg-gray-800 flex items-center justify-center shrink-0">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-gray-500">
+                              <line x1="12" x2="12" y1="5" y2="19" /><line x1="5" x2="19" y1="12" y2="12" />
+                            </svg>
+                          </span>
+                          <p className="text-sm text-gray-400">Create new contact &quot;{item.person.name}&quot;</p>
+                        </button>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               );
             }
