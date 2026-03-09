@@ -90,7 +90,8 @@ type ChatMessage =
   | { role: "notes"; people: SavedPerson[]; error?: string }
   | { role: "tasks"; tasks: SavedTask[] }
   | { role: "ambiguous"; pendingText: string; tasks: ParsedTask[]; people: ParsedPerson[] }
-  | { role: "disambiguate"; items: DisambiguationItem[]; savedAlongside: SavedPerson[] };
+  | { role: "disambiguate"; items: DisambiguationItem[]; savedAlongside: SavedPerson[] }
+  | { role: "no_person"; originalNote: string };
 
 // --- Style maps ---
 
@@ -259,6 +260,8 @@ export default function NotesPage() {
       } else if (m.role === "disambiguate") {
         const names = [...m.savedAlongside.map((p) => p.name), ...m.items.map((d) => d.person.name)];
         result.push({ role: "assistant", content: `[Saving/resolving contacts: ${names.join(", ")}]` });
+      } else if (m.role === "no_person") {
+        result.push({ role: "assistant", content: "[Asked user to provide a name for the note]" });
       }
     }
     return result;
@@ -445,15 +448,19 @@ export default function NotesPage() {
         setMessages((prev) => [...prev, { role: "ambiguous", pendingText: note, tasks: rawTasks, people }]);
       } else {
         // notes (default)
-        const { saved, needsDisambiguation } = await saveContacts(people);
-        if (needsDisambiguation.length > 0) {
-          // Some contacts saved, some need disambiguation
-          if (saved.length > 0) {
+        if (people.length === 0) {
+          // Classifier said "notes" but parser found no people — ask for a name
+          setMessages((prev) => [...prev, { role: "no_person", originalNote: note }]);
+        } else {
+          const { saved, needsDisambiguation } = await saveContacts(people);
+          if (needsDisambiguation.length > 0) {
+            if (saved.length > 0) {
+              setMessages((prev) => [...prev, { role: "notes", people: saved }]);
+            }
+            setMessages((prev) => [...prev, { role: "disambiguate", items: needsDisambiguation, savedAlongside: saved }]);
+          } else {
             setMessages((prev) => [...prev, { role: "notes", people: saved }]);
           }
-          setMessages((prev) => [...prev, { role: "disambiguate", items: needsDisambiguation, savedAlongside: saved }]);
-        } else {
-          setMessages((prev) => [...prev, { role: "notes", people: saved }]);
         }
       }
     } catch {
@@ -558,6 +565,43 @@ export default function NotesPage() {
       );
     } catch {
       // Silently fail
+    }
+  };
+
+  const handleResolveNoPerson = async (msgIndex: number, name: string) => {
+    const msg = messages[msgIndex];
+    if (msg.role !== "no_person") return;
+
+    const trimmed = name.trim();
+    if (!trimmed) return;
+
+    setIsProcessing(true);
+    try {
+      const today = new Date().toISOString().split("T")[0];
+      const person: ParsedPerson = {
+        name: trimmed,
+        note_about_them: msg.originalNote,
+        tags: [],
+        interaction_date: today,
+        energy_level: null,
+      };
+      const { saved, needsDisambiguation } = await saveContacts([person]);
+
+      // Remove the no_person message and replace with result
+      setMessages((prev) => {
+        const without = prev.filter((_, idx) => idx !== msgIndex);
+        if (needsDisambiguation.length > 0) {
+          return [...without,
+            ...(saved.length > 0 ? [{ role: "notes" as const, people: saved }] : []),
+            { role: "disambiguate" as const, items: needsDisambiguation, savedAlongside: saved },
+          ];
+        }
+        return [...without, { role: "notes" as const, people: saved }];
+      });
+    } catch {
+      // Silently fail
+    } finally {
+      setIsProcessing(false);
     }
   };
 
@@ -726,6 +770,44 @@ export default function NotesPage() {
                       </div>
                     </>
                   )}
+                </div>
+              );
+            }
+
+            // No person detected — ask for a name
+            if (msg.role === "no_person") {
+              return (
+                <div key={i} className="flex flex-col gap-3">
+                  <div className="bg-gray-900 border border-amber-500/20 rounded-xl px-4 py-4">
+                    <p className="text-sm text-gray-300 mb-3">
+                      I understood this as a note about someone, but couldn&apos;t detect a name. Who is this about?
+                    </p>
+                    <form
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        const form = e.target as HTMLFormElement;
+                        const nameInput = form.elements.namedItem("personName") as HTMLInputElement;
+                        if (nameInput?.value.trim()) {
+                          handleResolveNoPerson(i, nameInput.value);
+                        }
+                      }}
+                      className="flex gap-2"
+                    >
+                      <input
+                        name="personName"
+                        type="text"
+                        placeholder="Enter a name…"
+                        autoFocus
+                        className="flex-1 px-3 py-2 rounded-lg bg-gray-800/50 border border-gray-700/40 text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-violet-500/40"
+                      />
+                      <button
+                        type="submit"
+                        className="px-4 py-2 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-xs font-medium transition-colors"
+                      >
+                        Save
+                      </button>
+                    </form>
+                  </div>
                 </div>
               );
             }
