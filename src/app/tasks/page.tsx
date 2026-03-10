@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import Link from "next/link";
 import { API_BASE, authedFetch, authedFormFetch } from "@/lib/api";
 import { useAuth } from "@/components/AuthProvider";
 import { formatDueDate, getDueDateStatus } from "@/lib/dates";
@@ -20,6 +21,21 @@ interface Task {
 }
 
 type Category = "all" | "work" | "admin" | "personal" | "ideas";
+
+interface ParsedTask {
+  title: string;
+  description: string;
+  due_date: string | null;
+  urgency: "low" | "neutral" | "high";
+  category: "work" | "admin" | "personal" | "ideas";
+}
+
+interface SavedTask extends ParsedTask { id: string; }
+
+type DrawerMessage =
+  | { role: "user"; text: string }
+  | { role: "tasks"; tasks: SavedTask[] }
+  | { role: "info"; text: string };
 
 // --- Style maps ---
 
@@ -56,6 +72,22 @@ function MicIcon({ size = 20 }: { size?: number }) {
   );
 }
 
+function SendIcon() {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M22 2L11 13" /><path d="M22 2l-7 20-4-9-9-4 20-7z" />
+    </svg>
+  );
+}
+
+function CloseIcon() {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <line x1="18" x2="6" y1="6" y2="18" /><line x1="6" x2="18" y1="6" y2="18" />
+    </svg>
+  );
+}
+
 // --- Component ---
 
 export default function TasksPage() {
@@ -87,6 +119,14 @@ function TasksContent() {
   const [processingLabel, setProcessingLabel] = useState<string>("");
   const [highlightedTask, setHighlightedTask] = useState<{ id: string; fields: string[] } | null>(null);
 
+  // Drawer state
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [drawerInput, setDrawerInput] = useState("");
+  const [drawerMessages, setDrawerMessages] = useState<DrawerMessage[]>([]);
+  const [drawerProcessing, setDrawerProcessing] = useState(false);
+  const [drawerRecording, setDrawerRecording] = useState(false);
+  const [drawerTranscribing, setDrawerTranscribing] = useState(false);
+
   // Handle ?highlight=<taskId> from notes page navigation
   useEffect(() => {
     const highlightId = searchParams.get("highlight");
@@ -107,9 +147,17 @@ function TasksContent() {
   const animFrameRef = useRef<number | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
-  useEffect(() => {
+  // Drawer recording refs (separate from task-editing voice refs)
+  const drawerMediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const drawerAudioChunksRef = useRef<Blob[]>([]);
+  const drawerAnalyserRef = useRef<AnalyserNode | null>(null);
+  const drawerAudioCtxRef = useRef<AudioContext | null>(null);
+  const drawerAnimFrameRef = useRef<number | null>(null);
+  const drawerCanvasRef = useRef<HTMLCanvasElement>(null);
+  const drawerScrollRef = useRef<HTMLDivElement>(null);
+
+  const fetchTasks = async () => {
     if (!session) return;
-    const fetchTasks = async () => {
       try {
         const res = await authedFetch(`${API_BASE}/tend/tasks/`, {}, session.access_token);
         if (res.ok) {
@@ -121,8 +169,11 @@ function TasksContent() {
       } finally {
         setIsFetching(false);
       }
-    };
+  };
+
+  useEffect(() => {
     fetchTasks();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session]);
 
   // Cleanup recording on unmount
@@ -131,8 +182,22 @@ function TasksContent() {
       if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
       audioCtxRef.current?.close();
       mediaRecorderRef.current?.stop();
+      if (drawerAnimFrameRef.current) cancelAnimationFrame(drawerAnimFrameRef.current);
+      drawerAudioCtxRef.current?.close();
+      drawerMediaRecorderRef.current?.stop();
     };
   }, []);
+
+  // Auto-scroll drawer messages
+  useEffect(() => {
+    if (drawerScrollRef.current) {
+      requestAnimationFrame(() => {
+        if (drawerScrollRef.current) {
+          drawerScrollRef.current.scrollTop = drawerScrollRef.current.scrollHeight;
+        }
+      });
+    }
+  }, [drawerMessages, drawerProcessing]);
 
   if (loading || !session) return null;
 
@@ -261,6 +326,163 @@ function TasksContent() {
       mediaRecorderRef.current = recorder;
       setRecordingTaskId(taskId);
       setTimeout(drawMiniWaveform, 50);
+    } catch {
+      // Microphone permission denied
+    }
+  };
+
+  // --- Drawer handlers ---
+
+  const drawerDrawWaveform = () => {
+    const analyser = drawerAnalyserRef.current;
+    const canvas = drawerCanvasRef.current;
+    if (!analyser || !canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    const bufferLength = analyser.fftSize;
+    const dataArray = new Uint8Array(bufferLength);
+    const draw = () => {
+      drawerAnimFrameRef.current = requestAnimationFrame(draw);
+      analyser.getByteTimeDomainData(dataArray);
+      const { width, height } = canvas;
+      ctx.clearRect(0, 0, width, height);
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = "#a78bfa";
+      ctx.beginPath();
+      const sliceWidth = width / bufferLength;
+      let x = 0;
+      for (let i = 0; i < bufferLength; i++) {
+        const v = dataArray[i] / 128.0;
+        const y = (v * height) / 2;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+        x += sliceWidth;
+      }
+      ctx.lineTo(width, height / 2);
+      ctx.stroke();
+    };
+    draw();
+  };
+
+  const drawerSaveTasks = async (parsedTasks: ParsedTask[]): Promise<SavedTask[]> => {
+    const res = await authedFetch(
+      `${API_BASE}/tend/tasks/`,
+      { method: "POST", body: JSON.stringify({ tasks: parsedTasks }) },
+      session.access_token
+    );
+    if (!res.ok) return parsedTasks.map((t) => ({ ...t, id: crypto.randomUUID() }));
+    const data = await res.json();
+    return data.tasks ?? [];
+  };
+
+  const drawerBuildConversation = (msgs: DrawerMessage[]) => {
+    const result: { role: "user" | "assistant"; content: string }[] = [];
+    for (let i = 0; i < msgs.length; i++) {
+      const m = msgs[i];
+      if (m.role === "user") {
+        const next = msgs[i + 1];
+        if (next && (next.role === "tasks" || next.role === "info")) {
+          result.push({ role: "user", content: `[Already processed: "${m.text}"]` });
+        } else {
+          result.push({ role: "user", content: m.text });
+        }
+      } else if (m.role === "tasks") {
+        const titles = m.tasks.map((t) => t.title).join(", ");
+        result.push({ role: "assistant", content: titles ? `[Created tasks: ${titles}. Already saved — do not recreate.]` : `[Tasks were deleted.]` });
+      } else if (m.role === "info") {
+        result.push({ role: "assistant", content: `[${m.text}]` });
+      }
+    }
+    return result;
+  };
+
+  const handleDrawerSubmit = async (overrideText?: string) => {
+    const note = (overrideText ?? drawerInput).trim();
+    if (!note || drawerProcessing) return;
+    const conversation = drawerBuildConversation(drawerMessages);
+    setDrawerMessages((prev) => [...prev, { role: "user", text: note }]);
+    setDrawerInput("");
+    setDrawerProcessing(true);
+    try {
+      const classifyRes = await authedFetch(
+        `${API_BASE}/tend/classify/`,
+        { method: "POST", body: JSON.stringify({ note, conversation }) },
+        session.access_token
+      );
+      if (!classifyRes.ok) {
+        setDrawerMessages((prev) => [...prev, { role: "info", text: "Something went wrong. Try again." }]);
+        return;
+      }
+      const data = await classifyRes.json();
+      const intent: string = data.intent ?? "notes";
+      const rawTasks: ParsedTask[] = data.tasks ?? [];
+      if (intent === "tasks" || intent === "ambiguous") {
+        const saved = await drawerSaveTasks(rawTasks);
+        setDrawerMessages((prev) => [...prev, { role: "tasks", tasks: saved }]);
+        fetchTasks();
+      } else {
+        setDrawerMessages((prev) => [...prev, { role: "info", text: "That sounds like a note about someone. Head to Notes to save it." }]);
+      }
+    } catch {
+      setDrawerMessages((prev) => [...prev, { role: "info", text: "Something went wrong. Try again." }]);
+    } finally {
+      setDrawerProcessing(false);
+    }
+  };
+
+  const handleDrawerRecord = async () => {
+    if (drawerRecording) {
+      if (drawerAnimFrameRef.current) cancelAnimationFrame(drawerAnimFrameRef.current);
+      drawerAudioCtxRef.current?.close();
+      drawerMediaRecorderRef.current?.stop();
+      setDrawerRecording(false);
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      drawerAudioChunksRef.current = [];
+      const audioCtx = new AudioContext();
+      const analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 1024;
+      audioCtx.createMediaStreamSource(stream).connect(analyser);
+      drawerAnalyserRef.current = analyser;
+      drawerAudioCtxRef.current = audioCtx;
+      const mimeType =
+        MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? "audio/webm;codecs=opus" :
+        MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" :
+        MediaRecorder.isTypeSupported("audio/mp4") ? "audio/mp4" :
+        MediaRecorder.isTypeSupported("audio/aac") ? "audio/aac" : "";
+      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+      const resolvedMime = recorder.mimeType || mimeType;
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) drawerAudioChunksRef.current.push(e.data);
+      };
+      recorder.onstop = async () => {
+        stream.getTracks().forEach((t) => t.stop());
+        const isMp4 = resolvedMime.includes("mp4") || resolvedMime.includes("aac") || resolvedMime.includes("m4a");
+        const ext = isMp4 ? "mp4" : "webm";
+        const blob = new Blob(drawerAudioChunksRef.current, { type: resolvedMime || "audio/webm" });
+        if (blob.size < 1000) { setDrawerTranscribing(false); return; }
+        const formData = new FormData();
+        formData.append("audio", blob, `recording.${ext}`);
+        setDrawerTranscribing(true);
+        try {
+          const res = await authedFormFetch(`${API_BASE}/tend/transcribe/`, formData, session!.access_token);
+          if (res.ok) {
+            const data = await res.json();
+            const text = data.text ?? "";
+            if (text.trim()) handleDrawerSubmit(text);
+          }
+        } catch {
+          // Silently fail
+        } finally {
+          setDrawerTranscribing(false);
+        }
+      };
+      recorder.start(1000);
+      drawerMediaRecorderRef.current = recorder;
+      setDrawerRecording(true);
+      setTimeout(drawerDrawWaveform, 50);
     } catch {
       // Microphone permission denied
     }
@@ -490,13 +712,28 @@ function TasksContent() {
 
           {/* New Task CTA */}
           <button
-            onClick={() => router.push("/notes")}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-violet-600 hover:bg-violet-500 text-white transition-colors shrink-0"
+            onClick={() => setDrawerOpen((prev) => !prev)}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors shrink-0 ${
+              drawerOpen
+                ? "bg-gray-800 text-gray-300 hover:bg-gray-700"
+                : "bg-violet-600 hover:bg-violet-500 text-white"
+            }`}
           >
-            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M12 5v14M5 12h14" />
-            </svg>
-            New Task
+            {drawerOpen ? (
+              <>
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="18" x2="6" y1="6" y2="18" /><line x1="6" x2="18" y1="6" y2="18" />
+                </svg>
+                Close
+              </>
+            ) : (
+              <>
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12 5v14M5 12h14" />
+                </svg>
+                New Task
+              </>
+            )}
           </button>
 
         </div>
@@ -558,6 +795,175 @@ function TasksContent() {
           )}
         </div>
       </div>
+
+      {/* Task creation drawer — mobile: fixed overlay, desktop: flex sibling */}
+      <div
+        className={`
+          fixed inset-y-0 right-0 z-[60] w-full max-w-sm
+          md:relative md:inset-auto md:z-auto md:max-w-none
+          flex flex-col rounded-l-2xl
+          transition-all duration-300 ease-in-out
+          ${drawerOpen
+            ? "translate-x-0 md:translate-x-0 md:w-[25%] md:min-w-[320px] bg-black border-l border-gray-800/50 shadow-2xl shadow-black/40"
+            : "translate-x-full md:translate-x-0 md:w-0 md:min-w-0 md:overflow-hidden md:border-l-0 bg-transparent pointer-events-none md:pointer-events-none"
+          }
+        `}
+      >
+        <div className="flex flex-col h-full min-w-[300px] md:min-w-[320px] overflow-hidden rounded-l-2xl">
+          {/* Header */}
+          <div className="flex items-center justify-between px-5 py-4 border-b border-gray-800/50">
+            <h3 className="text-base font-semibold text-gray-200">New Task</h3>
+            <button
+              onClick={() => setDrawerOpen(false)}
+              className="p-2 rounded-xl text-gray-500 hover:text-gray-200 hover:bg-gray-800/50 transition-colors"
+            >
+              <CloseIcon />
+            </button>
+          </div>
+
+          {/* Messages */}
+          <div ref={drawerScrollRef} className="flex-1 overflow-y-auto px-4 py-4">
+            {drawerMessages.length === 0 && !drawerProcessing ? (
+              <div className="flex flex-col items-center justify-center h-full text-center">
+                <div className="w-12 h-12 rounded-2xl bg-violet-500/10 border border-violet-500/20 flex items-center justify-center mb-4 shadow-lg shadow-violet-500/5">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-violet-400">
+                    <path d="M12 5v14M5 12h14" />
+                  </svg>
+                </div>
+                <p className="text-[13px] text-gray-500">Type or speak a task</p>
+                <p className="text-xs text-gray-700 mt-1.5">&quot;Follow up with Sarah by Friday&quot;</p>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-4">
+                {drawerMessages.map((msg, i) => {
+                  if (msg.role === "user") {
+                    return (
+                      <div key={i} className="flex justify-end">
+                        <div className="bg-violet-600/20 border border-violet-500/20 rounded-2xl rounded-br-sm px-3 py-2 max-w-[90%]">
+                          <p className="text-sm text-gray-200">{msg.text}</p>
+                        </div>
+                      </div>
+                    );
+                  }
+                  if (msg.role === "tasks") {
+                    return (
+                      <div key={i} className="flex flex-col gap-2">
+                        <p className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold">
+                          {msg.tasks.length} task{msg.tasks.length !== 1 ? "s" : ""} created
+                        </p>
+                        <div className="bg-gray-900 border border-gray-800/60 rounded-2xl overflow-hidden">
+                          {msg.tasks.map((task, j) => (
+                            <div key={task.id} className={`px-3 py-2.5 ${j > 0 ? "border-t border-gray-800/40" : ""}`}>
+                              <p className="text-sm text-gray-200 leading-snug">{task.title}</p>
+                              {task.description && <p className="text-[11px] text-gray-500 mt-0.5 line-clamp-1">{task.description}</p>}
+                              {task.due_date && <p className="text-[11px] text-gray-500 mt-0.5">{formatDueDate(task.due_date)}</p>}
+                              <div className="flex gap-1 mt-1.5">
+                                <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded-full border ${urgencyStyles[task.urgency]}`}>{task.urgency.toUpperCase()}</span>
+                                <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded-full border ${categoryStyles[task.category]}`}>{task.category.toUpperCase()}</span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  }
+                  if (msg.role === "info") {
+                    return (
+                      <div key={i} className="bg-gray-900 border border-amber-500/20 rounded-2xl px-4 py-3.5">
+                        <p className="text-sm text-gray-300">{msg.text}</p>
+                        <Link href="/notes" className="text-xs text-violet-400 hover:text-violet-300 mt-2 inline-block">
+                          Go to Notes &rarr;
+                        </Link>
+                      </div>
+                    );
+                  }
+                  return null;
+                })}
+                {drawerProcessing && (
+                  <div className="flex justify-start">
+                    <div className="bg-gray-900 border border-gray-800/60 rounded-2xl rounded-bl-sm px-3 py-2">
+                      <div className="flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-bounce" style={{ animationDelay: "0ms" }} />
+                        <span className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-bounce" style={{ animationDelay: "150ms" }} />
+                        <span className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-bounce" style={{ animationDelay: "300ms" }} />
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Input bar */}
+          <div className="px-4 py-3 border-t border-gray-800/50">
+            <div className="bg-gray-900 border border-gray-800/60 rounded-2xl px-4 py-3 focus-within:border-violet-500/40 focus-within:ring-1 focus-within:ring-violet-500/15 transition-all">
+              {drawerRecording && (
+                <div className="mb-2">
+                  <div className="flex items-center gap-1.5 mb-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
+                    <span className="text-[10px] text-red-400 font-medium">Recording…</span>
+                  </div>
+                  <canvas ref={drawerCanvasRef} width={280} height={36} className="w-full h-9 rounded-lg bg-gray-800/40" />
+                </div>
+              )}
+              {drawerTranscribing && (
+                <div className="flex items-center gap-1.5 mb-2">
+                  <span className="w-3 h-3 border-2 border-violet-400/30 border-t-violet-400 rounded-full animate-spin" />
+                  <span className="text-[10px] text-violet-400 font-medium">Transcribing…</span>
+                </div>
+              )}
+              <textarea
+                value={drawerInput}
+                onChange={(e) => setDrawerInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey && !drawerRecording) {
+                    e.preventDefault();
+                    handleDrawerSubmit();
+                  }
+                }}
+                placeholder={drawerRecording ? "Listening…" : drawerTranscribing ? "Transcribing…" : "Describe a task…"}
+                rows={2}
+                disabled={drawerRecording || drawerTranscribing}
+                className="w-full bg-transparent text-sm text-gray-200 placeholder-gray-600 resize-none focus:outline-none disabled:opacity-50 mb-2"
+              />
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleDrawerRecord}
+                  disabled={drawerTranscribing}
+                  title={drawerRecording ? "Stop recording" : "Start recording"}
+                  className={`p-2 rounded-xl transition-colors disabled:opacity-40 ${
+                    drawerRecording
+                      ? "bg-red-500/15 text-red-400 border border-red-500/30"
+                      : "bg-gray-800 text-gray-400 hover:text-gray-200 border border-gray-700/50 hover:border-gray-600"
+                  }`}
+                >
+                  <MicIcon size={14} />
+                </button>
+                <div className="flex-1" />
+                <button
+                  onClick={() => handleDrawerSubmit()}
+                  disabled={!drawerInput.trim() || drawerProcessing || drawerRecording || drawerTranscribing}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-violet-600 hover:bg-violet-500 disabled:bg-gray-800 disabled:text-gray-600 text-white text-xs font-medium transition-colors"
+                >
+                  {drawerProcessing ? (
+                    <span className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  ) : (
+                    <SendIcon />
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Mobile backdrop */}
+      {drawerOpen && (
+        <div
+          className="md:hidden fixed inset-0 bg-black/60 backdrop-blur-sm z-[55]"
+          onClick={() => setDrawerOpen(false)}
+        />
+      )}
     </div>
   );
 }
