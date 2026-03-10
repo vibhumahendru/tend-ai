@@ -27,6 +27,16 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     return <>{children}</>;
   }
 
+  // Focus-mode routes — no sidebar, no distractions
+  const isFocusMode = /^\/tasks\/[^/]+\/start/.test(pathname);
+  if (session && isFocusMode) {
+    return (
+      <main className="min-h-screen p-4 pb-20 md:p-8 md:pb-8">
+        {children}
+      </main>
+    );
+  }
+
   // Authenticated app shell
   if (session) {
     return (

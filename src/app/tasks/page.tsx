@@ -624,16 +624,24 @@ function TasksContent() {
           </span>
 
           {task.status === "pending" && (
-            <button
-              onClick={() => toggleFocus(task)}
-              className={`text-[10px] font-medium px-2 py-0.5 rounded-full border transition-all opacity-0 group-hover:opacity-100 ${
-                task.is_focused
-                  ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30 hover:bg-red-500/15 hover:text-red-400 hover:border-red-500/30"
-                  : "bg-emerald-500/15 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/25"
-              }`}
-            >
-              {task.is_focused ? "Defocus" : "Focus"}
-            </button>
+            <>
+              <Link
+                href={`/tasks/${task.id}/start`}
+                className="text-[10px] font-medium px-2 py-0.5 rounded-full border bg-emerald-500/15 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/25 transition-all opacity-0 group-hover:opacity-100"
+              >
+                Start
+              </Link>
+              <button
+                onClick={() => toggleFocus(task)}
+                className={`text-[10px] font-medium px-2 py-0.5 rounded-full border transition-all opacity-0 group-hover:opacity-100 ${
+                  task.is_focused
+                    ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30 hover:bg-red-500/15 hover:text-red-400 hover:border-red-500/30"
+                    : "bg-emerald-500/15 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/25"
+                }`}
+              >
+                {task.is_focused ? "Defocus" : "Focus"}
+              </button>
+            </>
           )}
 
           <button
