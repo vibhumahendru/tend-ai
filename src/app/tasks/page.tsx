@@ -17,6 +17,7 @@ interface Task {
   urgency: "low" | "neutral" | "high";
   category: "work" | "admin" | "personal" | "ideas";
   status: "pending" | "complete";
+  is_focused: boolean;
   created_at: string;
 }
 
@@ -507,8 +508,9 @@ function TasksContent() {
     .filter((t) => t.status === activeTab)
     .filter((t) => activeCategory === "all" || t.category === activeCategory);
 
-  const highTasks = filtered.filter((t) => t.urgency === "high").sort(sortByDueDate);
-  const otherTasks = filtered.filter((t) => t.urgency !== "high").sort(sortByDueDate);
+  const focusedTasks = filtered.filter((t) => t.is_focused).sort(sortByDueDate);
+  const highTasks = filtered.filter((t) => !t.is_focused && t.urgency === "high").sort(sortByDueDate);
+  const otherTasks = filtered.filter((t) => !t.is_focused && t.urgency !== "high").sort(sortByDueDate);
 
   const toggleStatus = async (task: Task) => {
     const newStatus = task.status === "pending" ? "complete" : "pending";
@@ -521,6 +523,20 @@ function TasksContent() {
       );
     } catch {
       setTasks((prev) => prev.map((t) => (t.id === task.id ? { ...t, status: task.status } : t)));
+    }
+  };
+
+  const toggleFocus = async (task: Task) => {
+    const newFocused = !task.is_focused;
+    setTasks((prev) => prev.map((t) => (t.id === task.id ? { ...t, is_focused: newFocused } : t)));
+    try {
+      await authedFetch(
+        `${API_BASE}/tend/tasks/${task.id}/`,
+        { method: "PATCH", body: JSON.stringify({ is_focused: newFocused }) },
+        session.access_token
+      );
+    } catch {
+      setTasks((prev) => prev.map((t) => (t.id === task.id ? { ...t, is_focused: task.is_focused } : t)));
     }
   };
 
@@ -537,9 +553,11 @@ function TasksContent() {
     return (
       <div
         key={task.id}
-        className={`flex flex-col md:flex-row md:items-start md:gap-3 px-3 md:px-4 py-3 bg-gray-900 hover:bg-gray-900/80 transition-all duration-500 ${
+        className={`group flex flex-col md:flex-row md:items-start md:gap-3 px-3 md:px-4 py-3 bg-gray-900 hover:bg-gray-900/80 transition-all duration-500 ${
           task.status === "complete" ? "opacity-50" : ""
-        } ${isHighlighted ? "ring-1 ring-emerald-500/40 bg-emerald-500/5" : ""}`}
+        } ${isHighlighted ? "ring-1 ring-emerald-500/40 bg-emerald-500/5" : ""} ${
+          task.is_focused ? "border-l-2 border-l-emerald-500/40" : ""
+        }`}
       >
         {/* Top row: checkbox + title (always horizontal) */}
         <div className="flex items-start gap-3 flex-1 min-w-0">
@@ -604,6 +622,19 @@ function TasksContent() {
           } ${highlightFields.includes("category") ? "ring-1 ring-violet-400/60" : ""}`}>
             {task.category.toUpperCase()}
           </span>
+
+          {task.status === "pending" && (
+            <button
+              onClick={() => toggleFocus(task)}
+              className={`text-[10px] font-medium px-2 py-0.5 rounded-full border transition-all opacity-0 group-hover:opacity-100 ${
+                task.is_focused
+                  ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30 hover:bg-red-500/15 hover:text-red-400 hover:border-red-500/30"
+                  : "bg-emerald-500/15 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/25"
+              }`}
+            >
+              {task.is_focused ? "Defocus" : "Focus"}
+            </button>
+          )}
 
           <button
             onClick={() => handleVoiceRecord(task.id)}
@@ -754,6 +785,22 @@ function TasksContent() {
             </div>
           ) : (
             <div className="flex flex-col gap-6">
+              {/* --- Focus section --- */}
+              {focusedTasks.length > 0 && (
+                <section>
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                    <h3 className="text-xs font-semibold text-emerald-400 uppercase tracking-wider">Focus</h3>
+                    <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400">
+                      {focusedTasks.length}
+                    </span>
+                  </div>
+                  <div className="flex flex-col divide-y divide-gray-800/40 border border-emerald-500/15 rounded-xl overflow-hidden">
+                    {focusedTasks.map((task) => renderTaskRow(task))}
+                  </div>
+                </section>
+              )}
+
               {/* --- High urgency section --- */}
               <section>
                 <div className="flex items-center gap-2 mb-2">
