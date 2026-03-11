@@ -11,7 +11,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const { session, loading } = useAuth();
   const pathname = usePathname();
 
-  const isPublic = PUBLIC_ROUTES.some((r) => pathname.startsWith(r));
+  const isPublic = pathname === "/" || PUBLIC_ROUTES.some((r) => pathname.startsWith(r));
 
   // While checking auth, show a blank dark screen to avoid flash
   if (loading) {
