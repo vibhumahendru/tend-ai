@@ -112,6 +112,7 @@ function TasksContent() {
   const [isFetching, setIsFetching] = useState(true);
   const [activeCategory, setActiveCategory] = useState<Category>("all");
   const [activeTab, setActiveTab] = useState<"pending" | "complete">("pending");
+  const [sortBy, setSortBy] = useState<"created" | "urgency" | "due">("created");
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
 
   // Voice editing state — single set, shared across all tasks
@@ -421,6 +422,11 @@ function TasksContent() {
         const saved = await drawerSaveTasks(rawTasks);
         setDrawerMessages((prev) => [...prev, { role: "tasks", tasks: saved }]);
         fetchTasks();
+        // Highlight newly created task
+        if (saved.length > 0 && saved[0].id) {
+          setHighlightedTask({ id: saved[0].id, fields: [] });
+          setTimeout(() => setHighlightedTask(null), 3000);
+        }
       } else {
         setDrawerMessages((prev) => [...prev, { role: "info", text: "That sounds like a note about someone. Head to Notes to save it." }]);
       }
@@ -495,12 +501,20 @@ function TasksContent() {
   const pendingCount = (cat: Category) =>
     cat === "all" ? pendingTasks.length : pendingTasks.filter((t) => t.category === cat).length;
 
-  // Sort: tasks with due dates soonest first, no-date tasks at the bottom
-  const sortByDueDate = (a: Task, b: Task) => {
+  const sortTasks = (a: Task, b: Task) => {
+    if (sortBy === "created") {
+      return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+    }
+    if (sortBy === "urgency") {
+      const urgencyOrder: Record<string, number> = { high: 0, neutral: 1, low: 2 };
+      const diff = urgencyOrder[a.urgency] - urgencyOrder[b.urgency];
+      if (diff !== 0) return diff;
+      return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+    }
+    // "due"
     const aDate = a.due_date ? new Date(a.due_date).getTime() : Infinity;
     const bDate = b.due_date ? new Date(b.due_date).getTime() : Infinity;
     if (aDate !== bDate) return aDate - bDate;
-    // Tie-break by created_at (newest first)
     return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
   };
 
@@ -508,9 +522,9 @@ function TasksContent() {
     .filter((t) => t.status === activeTab)
     .filter((t) => activeCategory === "all" || t.category === activeCategory);
 
-  const focusedTasks = filtered.filter((t) => t.is_focused).sort(sortByDueDate);
-  const highTasks = filtered.filter((t) => !t.is_focused && t.urgency === "high").sort(sortByDueDate);
-  const otherTasks = filtered.filter((t) => !t.is_focused && t.urgency !== "high").sort(sortByDueDate);
+  const focusedTasks = filtered.filter((t) => t.is_focused).sort(sortTasks);
+  const highTasks = filtered.filter((t) => !t.is_focused && t.urgency === "high").sort(sortTasks);
+  const otherTasks = filtered.filter((t) => !t.is_focused && t.urgency !== "high").sort(sortTasks);
 
   const toggleStatus = async (task: Task) => {
     const newStatus = task.status === "pending" ? "complete" : "pending";
@@ -555,8 +569,8 @@ function TasksContent() {
         key={task.id}
         className={`group flex flex-col md:flex-row md:items-start md:gap-3 px-3 md:px-4 py-3 bg-gray-900 hover:bg-gray-900/80 transition-all duration-500 ${
           task.status === "complete" ? "opacity-50" : ""
-        } ${isHighlighted ? "ring-1 ring-emerald-500/40 bg-emerald-500/5" : ""} ${
-          task.is_focused ? "border-l-2 border-l-emerald-500/40" : ""
+        } ${isHighlighted ? "!bg-emerald-500/15 border-l-2 !border-l-emerald-400 animate-pulse" : ""} ${
+          !isHighlighted && task.is_focused ? "border-l-2 border-l-emerald-500/40" : ""
         }`}
       >
         {/* Top row: checkbox + title (always horizontal) */}
@@ -743,6 +757,21 @@ function TasksContent() {
                 }`}
               >
                 {tab === "complete" ? "Completed" : "Pending"}
+              </button>
+            ))}
+          </div>
+
+          {/* Sort control */}
+          <div className="flex bg-gray-900 border border-gray-800/60 rounded-lg p-0.5 gap-0.5">
+            {([["created", "Newest"], ["urgency", "Urgency"], ["due", "Due Date"]] as const).map(([key, label]) => (
+              <button
+                key={key}
+                onClick={() => setSortBy(key)}
+                className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                  sortBy === key ? "bg-gray-800 text-gray-100" : "text-gray-500 hover:text-gray-300"
+                }`}
+              >
+                {label}
               </button>
             ))}
           </div>
