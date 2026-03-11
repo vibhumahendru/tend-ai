@@ -6,6 +6,7 @@ import Link from "next/link";
 import { API_BASE, authedFetch, authedFormFetch } from "@/lib/api";
 import { useAuth } from "@/components/AuthProvider";
 import { formatDueDate } from "@/lib/dates";
+import confetti from "canvas-confetti";
 
 // --- Types ---
 
@@ -151,6 +152,9 @@ export default function StartTaskPage() {
   const [timeRemaining, setTimeRemaining] = useState(0);
   const [timerRunning, setTimerRunning] = useState(false);
   const [timerStarted, setTimerStarted] = useState(false); // focus mode toggle
+  const [taskCompleted, setTaskCompleted] = useState(false);
+  const [soundEnabled, setSoundEnabled] = useState(true);
+  const soundEnabledRef = useRef(true);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // --- Voice + waveform refs ---
@@ -191,6 +195,25 @@ export default function StartTaskPage() {
       .finally(() => setMotivationLoading(false));
   }, [task, session]);
 
+  // --- Play a short ping sound (Web Audio API) ---
+  const playPing = useCallback(() => {
+    try {
+      const ctx = new AudioContext();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.frequency.value = 880;
+      gain.gain.value = 0.08;
+      osc.start();
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
+      osc.stop(ctx.currentTime + 0.3);
+      setTimeout(() => ctx.close(), 500);
+    } catch {
+      /* audio not supported */
+    }
+  }, []);
+
   // --- Timer logic ---
   const selectPreset = (seconds: number) => {
     setTimerDuration(seconds);
@@ -215,13 +238,18 @@ export default function StartTaskPage() {
             clearInterval(intervalRef.current!);
             setTimerRunning(false);
             setTimerStarted(false); // exit focus mode when done
+            if (soundEnabledRef.current) playPing(); // final ping
             return 0;
+          }
+          // Ping every minute
+          if (soundEnabledRef.current && (prev - 1) > 0 && (prev - 1) % 60 === 0) {
+            playPing();
           }
           return prev - 1;
         });
       }, 1000);
     }
-  }, [timerRunning, timeRemaining]);
+  }, [timerRunning, timeRemaining, playPing]);
 
   const resetTimer = () => {
     if (intervalRef.current) clearInterval(intervalRef.current);
@@ -242,8 +270,20 @@ export default function StartTaskPage() {
       if (intervalRef.current) clearInterval(intervalRef.current);
       if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
       audioCtxRef.current?.close();
+      document.title = "Tend AI";
     };
   }, []);
+
+  // --- Update tab title with timer ---
+  useEffect(() => {
+    if (timerRunning && task) {
+      document.title = `${formatTime(timeRemaining)} — ${task.title}`;
+    } else if (timerStarted && task) {
+      document.title = `⏸ ${formatTime(timeRemaining)} — ${task.title}`;
+    } else {
+      document.title = "Tend AI";
+    }
+  }, [timeRemaining, timerRunning, timerStarted, task]);
 
   const formatTime = (s: number) => {
     const m = Math.floor(s / 60);
@@ -393,6 +433,36 @@ export default function StartTaskPage() {
     submitPlan(rambleInput);
   };
 
+  // --- Mark task complete / undo ---
+  const handleMarkComplete = async () => {
+    if (!task || !session) return;
+    const newStatus = taskCompleted ? "pending" : "complete";
+    try {
+      await authedFetch(
+        `${API_BASE}/tend/tasks/${task.id}/`,
+        { method: "PATCH", body: JSON.stringify({ status: newStatus }) },
+        session.access_token
+      );
+      if (!taskCompleted) {
+        // Completing — stop timer, fire confetti
+        if (intervalRef.current) clearInterval(intervalRef.current);
+        setTimerRunning(false);
+        setTaskCompleted(true);
+        confetti({
+          particleCount: 150,
+          spread: 80,
+          origin: { y: 0.6 },
+          colors: ["#34d399", "#6ee7b7", "#a7f3d0", "#8b5cf6", "#c4b5fd"],
+        });
+      } else {
+        // Undoing
+        setTaskCompleted(false);
+      }
+    } catch {
+      /* ignore */
+    }
+  };
+
   const toggleStep = (index: number) => {
     setPlanSteps((prev) =>
       prev.map((s, i) => (i === index ? { ...s, done: !s.done } : s))
@@ -422,16 +492,25 @@ export default function StartTaskPage() {
   // =====================================================================
   // FOCUS MODE — minimal view: timer + title + steps
   // =====================================================================
-  if (timerStarted) {
+  if (timerStarted || taskCompleted) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[calc(100dvh-6rem)] md:min-h-[calc(100dvh-4rem)] px-4 relative">
-        {/* Exit button — top left corner */}
-        <button
-          onClick={exitFocusMode}
-          className="absolute top-0 left-4 inline-flex items-center gap-1.5 text-sm text-gray-600 hover:text-gray-400 transition-colors"
-        >
-          <BackArrowIcon /> Exit
-        </button>
+        {/* Exit / Back button — top left corner */}
+        {taskCompleted ? (
+          <Link
+            href="/tasks"
+            className="absolute top-0 left-4 inline-flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-300 transition-colors"
+          >
+            <BackArrowIcon /> Back to Tasks
+          </Link>
+        ) : (
+          <button
+            onClick={exitFocusMode}
+            className="absolute top-0 left-4 inline-flex items-center gap-1.5 text-sm text-gray-600 hover:text-gray-400 transition-colors"
+          >
+            <BackArrowIcon /> Exit
+          </button>
+        )}
 
         {/* Timer */}
         <div className="w-full max-w-[280px] mb-6">
@@ -439,42 +518,94 @@ export default function StartTaskPage() {
             <circle cx="110" cy="110" r={RADIUS} fill="none" stroke="#1f2937" strokeWidth="8" />
             <circle
               cx="110" cy="110" r={RADIUS}
-              fill="none" stroke="#8b5cf6" strokeWidth="8"
+              fill="none"
+              stroke={taskCompleted ? "#34d399" : "#8b5cf6"}
+              strokeWidth="8"
               strokeLinecap="round"
               strokeDasharray={CIRCUMFERENCE}
-              strokeDashoffset={dashOffset}
+              strokeDashoffset={taskCompleted ? 0 : dashOffset}
               transform="rotate(-90 110 110)"
               className="transition-[stroke-dashoffset] duration-1000 ease-linear"
             />
             <text
               x="110" y="110"
               textAnchor="middle" dominantBaseline="central"
-              fill="#f3f4f6"
-              style={{ fontSize: 36, fontFamily: "var(--font-mono)" }}
+              fill={taskCompleted ? "#34d399" : "#f3f4f6"}
+              style={{ fontSize: taskCompleted ? 20 : 36, fontFamily: "var(--font-mono)" }}
             >
-              {formatTime(timeRemaining)}
+              {taskCompleted ? "Done!" : formatTime(timeRemaining)}
             </text>
           </svg>
         </div>
 
-        {/* Controls */}
-        <div className="flex gap-3 mb-8">
-          <button
-            onClick={toggleTimer}
-            className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-violet-600 hover:bg-violet-500 text-white text-sm font-medium transition-colors"
-          >
-            {timerRunning ? <><PauseIcon /> Pause</> : <><PlayIcon /> Resume</>}
-          </button>
-          <button
-            onClick={resetTimer}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gray-800 text-gray-400 hover:text-gray-200 border border-gray-700/50 text-sm font-medium transition-colors"
-          >
-            <ResetIcon /> Reset
-          </button>
-        </div>
-
         {/* Task title */}
         <h1 className="text-xl font-semibold text-gray-100 text-center mb-6 max-w-lg">{task.title}</h1>
+
+        {/* Controls */}
+        {taskCompleted ? (
+          <div className="flex gap-3 mb-8">
+            <button
+              onClick={handleMarkComplete}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-transparent text-gray-400 border border-gray-700/50 hover:text-gray-200 text-sm font-medium transition-colors"
+            >
+              Undo Complete
+            </button>
+            <Link
+              href="/tasks"
+              className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium transition-colors"
+            >
+              Back to Tasks
+            </Link>
+          </div>
+        ) : (
+          <div className="flex gap-3 mb-8">
+            <button
+              onClick={toggleTimer}
+              className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-violet-600 hover:bg-violet-500 text-white text-sm font-medium transition-colors"
+            >
+              {timerRunning ? <><PauseIcon /> Pause</> : <><PlayIcon /> Resume</>}
+            </button>
+            <button
+              onClick={resetTimer}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gray-800 text-gray-400 hover:text-gray-200 border border-gray-700/50 text-sm font-medium transition-colors"
+            >
+              <ResetIcon /> Reset
+            </button>
+            <button
+              onClick={handleMarkComplete}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-transparent text-emerald-400 border border-emerald-500/50 hover:bg-emerald-500/10 text-sm font-medium transition-colors"
+            >
+              <CheckIcon /> Mark Complete
+            </button>
+          </div>
+        )}
+
+        {/* Sound toggle */}
+        {!taskCompleted && (
+          <button
+            onClick={() => {
+              setSoundEnabled((prev) => {
+                soundEnabledRef.current = !prev;
+                return !prev;
+              });
+            }}
+            className="inline-flex items-center gap-1.5 text-xs text-gray-600 hover:text-gray-400 transition-colors mb-8"
+          >
+            {soundEnabled ? (
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+                <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+              </svg>
+            ) : (
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+                <line x1="23" y1="9" x2="17" y2="15" />
+                <line x1="17" y1="9" x2="23" y2="15" />
+              </svg>
+            )}
+            {soundEnabled ? "Sound on" : "Sound off"}
+          </button>
+        )}
 
         {/* Plan steps (if any) */}
         {planSteps.length > 0 && (
@@ -505,7 +636,7 @@ export default function StartTaskPage() {
         )}
 
         {/* Timer done notification */}
-        {timerDuration > 0 && timeRemaining === 0 && !timerRunning && (
+        {!taskCompleted && timerDuration > 0 && timeRemaining === 0 && !timerRunning && (
           <div className="mt-6 bg-emerald-500/10 border border-emerald-500/30 rounded-xl px-4 py-3 text-center">
             <p className="text-sm text-emerald-400 font-medium">Time&apos;s up!</p>
           </div>
