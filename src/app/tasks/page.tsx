@@ -6,60 +6,8 @@ import Link from "next/link";
 import { API_BASE, authedFetch, authedFormFetch } from "@/lib/api";
 import { useAuth } from "@/components/AuthProvider";
 import { formatDueDate, getDueDateStatus } from "@/lib/dates";
-
-// --- Types ---
-
-interface Task {
-  id: string;
-  title: string;
-  description: string;
-  due_date: string | null;
-  urgency: "low" | "neutral" | "high";
-  category: "work" | "admin" | "personal" | "ideas";
-  status: "pending" | "complete";
-  is_focused: boolean;
-  created_at: string;
-}
-
-type Category = "all" | "work" | "admin" | "personal" | "ideas";
-
-interface ParsedTask {
-  title: string;
-  description: string;
-  due_date: string | null;
-  urgency: "low" | "neutral" | "high";
-  category: "work" | "admin" | "personal" | "ideas";
-}
-
-interface SavedTask extends ParsedTask { id: string; }
-
-type DrawerMessage =
-  | { role: "user"; text: string }
-  | { role: "tasks"; tasks: SavedTask[] }
-  | { role: "info"; text: string };
-
-// --- Style maps ---
-
-const urgencyStyles: Record<string, string> = {
-  high: "bg-red-500/15 text-red-400 border-red-500/30",
-  neutral: "bg-amber-500/15 text-amber-400 border-amber-500/30",
-  low: "bg-gray-600/20 text-gray-500 border-gray-600/30",
-};
-
-const categoryStyles: Record<string, string> = {
-  work: "bg-blue-500/15 text-blue-400 border-blue-500/30",
-  admin: "bg-orange-500/15 text-orange-400 border-orange-500/30",
-  personal: "bg-pink-500/15 text-pink-400 border-pink-500/30",
-  ideas: "bg-violet-500/15 text-violet-400 border-violet-500/30",
-};
-
-const categoryIcons: Record<string, string> = {
-  all: "◈",
-  work: "💼",
-  admin: "📋",
-  personal: "👤",
-  ideas: "💡",
-};
+import { Task, Category, ParsedTask, SavedTask, DrawerMessage, urgencyStyles, categoryStyles, categoryIcons } from "@/lib/task-types";
+import TaskDetailModal from "@/components/TaskDetailModal";
 
 // --- Icons ---
 
@@ -114,6 +62,54 @@ function TasksContent() {
   const [activeTab, setActiveTab] = useState<"pending" | "complete">("pending");
   const [sortBy, setSortBy] = useState<"created" | "urgency" | "due">("created");
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
+  const [selectedTask, setSelectedTask] = useState<Task | null>(null);
+  const [completingTaskId, setCompletingTaskId] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ taskId: string; snapshot: Task } | null>(null);
+  const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Pentatonic-ish notes that always sound good together (D major 9 voicing)
+  const completeNotes = useRef([
+    293.66, // D4
+    369.99, // F#4
+    440.00, // A4
+    523.25, // C#5 (maj7)
+    587.33, // D5
+    659.25, // E5 (9th)
+    739.99, // F#5
+  ]);
+
+  const playCompleteSound = () => {
+    try {
+      const ctx = new AudioContext();
+      const note = completeNotes.current[Math.floor(Math.random() * completeNotes.current.length)];
+
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+
+      osc.type = "sine";
+      osc.frequency.value = note;
+
+      // Add a subtle harmonic
+      const osc2 = ctx.createOscillator();
+      const gain2 = ctx.createGain();
+      osc2.type = "sine";
+      osc2.frequency.value = note * 2; // octave above, very quiet
+      gain2.gain.setValueAtTime(0.02, ctx.currentTime);
+      gain2.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
+      osc2.connect(gain2).connect(ctx.destination);
+      osc2.start();
+      osc2.stop(ctx.currentTime + 0.4);
+
+      gain.gain.setValueAtTime(0.12, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.5);
+
+      osc.connect(gain).connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.5);
+
+      setTimeout(() => ctx.close(), 600);
+    } catch { /* audio not available */ }
+  };
 
   // Voice editing state — single set, shared across all tasks
   const [recordingTaskId, setRecordingTaskId] = useState<string | null>(null);
@@ -527,17 +523,74 @@ function TasksContent() {
   const otherTasks = filtered.filter((t) => !t.is_focused && t.urgency !== "high").sort(sortTasks);
 
   const toggleStatus = async (task: Task) => {
-    const newStatus = task.status === "pending" ? "complete" : "pending";
-    setTasks((prev) => prev.map((t) => (t.id === task.id ? { ...t, status: newStatus } : t)));
+    const isCompleting = task.status === "pending";
+    const newStatus = isCompleting ? "complete" : "pending";
+
+    if (isCompleting) {
+      // Save snapshot for undo
+      const snapshot = { ...task };
+
+      // 1. Trigger strikethrough animation + sound
+      setCompletingTaskId(task.id);
+      playCompleteSound();
+
+      // 2. Fire API immediately
+      authedFetch(
+        `${API_BASE}/tend/tasks/${task.id}/`,
+        { method: "PATCH", body: JSON.stringify({ status: "complete" }) },
+        session.access_token
+      ).catch(() => {
+        // revert on error
+        setTasks((prev) => prev.map((t) => (t.id === task.id ? snapshot : t)));
+        setCompletingTaskId(null);
+      });
+
+      // 3. After 1s animation, mark complete in state + show toast
+      setTimeout(() => {
+        setTasks((prev) => prev.map((t) => (t.id === task.id ? { ...t, status: "complete" } : t)));
+        setCompletingTaskId(null);
+
+        // Clear any existing toast timeout
+        if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
+        setToast({ taskId: task.id, snapshot });
+
+        // Auto-dismiss toast after 5s
+        toastTimeoutRef.current = setTimeout(() => setToast(null), 5000);
+      }, 1000);
+    } else {
+      // Un-completing — immediate, no animation
+      setTasks((prev) => prev.map((t) => (t.id === task.id ? { ...t, status: "pending" } : t)));
+      try {
+        await authedFetch(
+          `${API_BASE}/tend/tasks/${task.id}/`,
+          { method: "PATCH", body: JSON.stringify({ status: "pending" }) },
+          session.access_token
+        );
+      } catch {
+        setTasks((prev) => prev.map((t) => (t.id === task.id ? { ...t, status: task.status } : t)));
+      }
+    }
+  };
+
+  const undoComplete = async () => {
+    if (!toast) return;
+    const { taskId, snapshot } = toast;
+
+    // Clear toast
+    if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
+    setToast(null);
+
+    // Restore task
+    setTasks((prev) => prev.map((t) => (t.id === taskId ? snapshot : t)));
+
+    // Revert API
     try {
       await authedFetch(
-        `${API_BASE}/tend/tasks/${task.id}/`,
-        { method: "PATCH", body: JSON.stringify({ status: newStatus }) },
+        `${API_BASE}/tend/tasks/${taskId}/`,
+        { method: "PATCH", body: JSON.stringify({ status: "pending" }) },
         session.access_token
       );
-    } catch {
-      setTasks((prev) => prev.map((t) => (t.id === task.id ? { ...t, status: task.status } : t)));
-    }
+    } catch { /* best effort */ }
   };
 
   const toggleFocus = async (task: Task) => {
@@ -563,6 +616,7 @@ function TasksContent() {
     const highlightFields = highlightedTask?.id === task.id ? highlightedTask.fields : [];
     const isBusy = isRecordingThis || isProcessingThis;
     const isExpanded = expandedTaskId === task.id;
+    const isCompleting = completingTaskId === task.id;
 
     return (
       <div
@@ -573,47 +627,67 @@ function TasksContent() {
           !isHighlighted && task.is_focused ? "border-l-2 border-l-emerald-500/40" : ""
         }`}
       >
-        {/* Top row: checkbox + title (always horizontal) */}
+        {/* Checkbox (urgency = border color) + title + meta */}
         <div className="flex items-start gap-3 flex-1 min-w-0">
-          <input
-            type="checkbox"
-            checked={task.status === "complete"}
-            onChange={() => toggleStatus(task)}
-            className="mt-0.5 w-4 h-4 accent-violet-500 cursor-pointer shrink-0"
-          />
+          <span
+            onClick={(e) => { e.stopPropagation(); toggleStatus(task); }}
+            className={`mt-0.5 w-4 h-4 rounded border-2 shrink-0 cursor-pointer flex items-center justify-center transition-colors duration-300 ${
+              task.status === "complete" || isCompleting
+                ? "bg-violet-500 border-violet-500"
+                : task.urgency === "high"
+                ? "border-red-400"
+                : task.urgency === "neutral"
+                ? "border-amber-400"
+                : "border-gray-600"
+            }`}
+          >
+            {(task.status === "complete" || isCompleting) && (
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="20 6 9 17 4 12" />
+              </svg>
+            )}
+          </span>
 
           <div
             className="flex-1 min-w-0 cursor-pointer"
-            onClick={() => setExpandedTaskId(isExpanded ? null : task.id)}
+            onClick={() => setSelectedTask(task)}
           >
-            <p className={`text-sm leading-snug transition-colors duration-500 ${
+            <p className={`text-sm leading-snug transition-colors duration-500 relative ${
               task.status === "complete" ? "line-through text-gray-500" : "text-gray-200"
             } ${highlightFields.includes("title") ? "text-violet-300" : ""}`}>
               {task.title}
+              {isCompleting && (
+                <span
+                  className="absolute left-0 top-1/2 h-[1.5px] bg-red-400 rounded-full"
+                  style={{ animation: "strikethrough 0.6s ease-out forwards" }}
+                />
+              )}
             </p>
             {task.description && (
-              <p className={`text-[11px] text-gray-500 mt-0.5 transition-colors duration-500 ${
-                isExpanded ? "" : "line-clamp-1"
-              } ${highlightFields.includes("description") ? "text-violet-400" : ""}`}>
+              <p className={`text-[11px] text-gray-500 mt-0.5 transition-colors duration-500 line-clamp-1 ${
+                highlightFields.includes("description") ? "text-violet-400" : ""
+              }`}>
                 {task.description}
               </p>
             )}
-            {task.due_date && (() => {
-              const dateStatus = getDueDateStatus(task.due_date);
-              const colorClass = highlightFields.includes("due_date")
-                ? "text-violet-400"
-                : dateStatus === "overdue"
-                ? "text-red-400"
-                : dateStatus === "due-soon"
-                ? "text-orange-400"
-                : "text-gray-600";
-              return (
-                <p className={`text-[11px] mt-0.5 transition-colors duration-500 ${colorClass}`}>
-                  {formatDueDate(task.due_date)}
-                  {dateStatus === "overdue" && <span className="ml-1">— Overdue</span>}
-                </p>
-              );
-            })()}
+            <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+              {task.due_date && (() => {
+                const dateStatus = getDueDateStatus(task.due_date);
+                const colorClass = highlightFields.includes("due_date")
+                  ? "text-violet-400"
+                  : dateStatus === "overdue"
+                  ? "text-red-400"
+                  : dateStatus === "due-soon"
+                  ? "text-orange-400"
+                  : "text-gray-600";
+                return (
+                  <span className={`text-[11px] transition-colors duration-500 ${colorClass}`}>
+                    {formatDueDate(task.due_date)}
+                    {dateStatus === "overdue" && <span className="ml-1">— Overdue</span>}
+                  </span>
+                );
+              })()}
+            </div>
 
             {isProcessingThis && (
               <div className="flex items-center gap-1.5 mt-1">
@@ -624,49 +698,39 @@ function TasksContent() {
           </div>
         </div>
 
-        {/* Bottom row on mobile, right column on desktop */}
-        <div className="flex gap-1.5 items-center mt-2 md:mt-0 ml-7 md:ml-0 shrink-0">
-          <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full border transition-all duration-500 ${
-            urgencyStyles[task.urgency]
-          } ${highlightFields.includes("urgency") ? "ring-1 ring-violet-400/60" : ""}`}>
-            {task.urgency.toUpperCase()}
-          </span>
-          <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full border transition-all duration-500 ${
-            categoryStyles[task.category]
-          } ${highlightFields.includes("category") ? "ring-1 ring-violet-400/60" : ""}`}>
-            {task.category.toUpperCase()}
-          </span>
-
+        {/* Right side: Focus + Start (hover on desktop, always on mobile) + mic */}
+        <div className="flex items-center gap-1.5 mt-2 md:mt-0 ml-7 md:ml-0 shrink-0">
           {task.status === "pending" && (
             <>
-              <Link
-                href={`/tasks/${task.id}/start`}
-                className="text-[10px] font-medium px-2 py-0.5 rounded-full border bg-emerald-500/15 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/25 transition-all opacity-0 group-hover:opacity-100"
-              >
-                Start
-              </Link>
               <button
-                onClick={() => toggleFocus(task)}
-                className={`text-[10px] font-medium px-2 py-0.5 rounded-full border transition-all opacity-0 group-hover:opacity-100 ${
+                onClick={(e) => { e.stopPropagation(); toggleFocus(task); }}
+                className={`text-[10px] font-medium px-2 py-0.5 rounded-full border transition-all md:opacity-0 md:group-hover:opacity-100 ${
                   task.is_focused
-                    ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30 hover:bg-red-500/15 hover:text-red-400 hover:border-red-500/30"
-                    : "bg-emerald-500/15 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/25"
+                    ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30 hover:bg-red-500/15 hover:text-red-400 hover:border-red-500/30 !opacity-100"
+                    : "bg-gray-800/50 text-gray-500 border-gray-700/50 hover:text-emerald-400 hover:bg-emerald-500/15 hover:border-emerald-500/30"
                 }`}
               >
                 {task.is_focused ? "Defocus" : "Focus"}
               </button>
+              <Link
+                href={`/tasks/${task.id}/start`}
+                onClick={(e) => e.stopPropagation()}
+                className="text-[10px] font-medium px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/25 transition-all md:opacity-0 md:group-hover:opacity-100"
+              >
+                Start
+              </Link>
             </>
           )}
 
           <button
-            onClick={() => handleVoiceRecord(task.id)}
+            onClick={(e) => { e.stopPropagation(); handleVoiceRecord(task.id); }}
             disabled={
               (recordingTaskId !== null && recordingTaskId !== task.id) ||
               isProcessingThis ||
               (processingTaskId !== null && processingTaskId !== task.id)
             }
             title={isRecordingThis ? "Stop recording" : "Voice edit"}
-            className={`p-1.5 rounded-lg transition-colors ml-0.5 disabled:opacity-30 ${
+            className={`p-1.5 rounded-lg transition-colors disabled:opacity-30 ${
               isRecordingThis
                 ? "bg-red-500/15 text-red-400 border border-red-500/30"
                 : isBusy
@@ -1047,6 +1111,46 @@ function TasksContent() {
           className="md:hidden fixed inset-0 bg-black/60 backdrop-blur-sm z-[55]"
           onClick={() => setDrawerOpen(false)}
         />
+      )}
+
+      {/* Task detail modal */}
+      {selectedTask && session && (
+        <TaskDetailModal
+          task={selectedTask}
+          onClose={() => setSelectedTask(null)}
+          onTaskUpdate={(updated) => {
+            setTasks((prev) => prev.map((t) => t.id === updated.id ? updated : t));
+            setSelectedTask(updated);
+          }}
+          token={session.access_token}
+        />
+      )}
+
+      {/* Toast notification */}
+      {toast && (
+        <div
+          className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[80] flex items-center gap-3 px-4 py-3 rounded-xl bg-gray-900 border border-gray-800/60 shadow-2xl shadow-black/40"
+          style={{ animation: "toast-in 0.25s ease-out" }}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#34d399" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="20 6 9 17 4 12" />
+          </svg>
+          <span className="text-sm text-gray-200">One task completed</span>
+          <button
+            onClick={undoComplete}
+            className="text-sm font-semibold text-violet-400 hover:text-violet-300 transition-colors ml-1"
+          >
+            Undo
+          </button>
+          <button
+            onClick={() => { if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current); setToast(null); }}
+            className="text-gray-600 hover:text-gray-400 transition-colors ml-1"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="18" x2="6" y1="6" y2="18" /><line x1="6" x2="18" y1="6" y2="18" />
+            </svg>
+          </button>
+        </div>
       )}
     </div>
   );
