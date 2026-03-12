@@ -214,6 +214,35 @@ export default function StartTaskPage() {
     }
   }, []);
 
+  // --- Play a 3-note ascending chime on timer completion ---
+  const playChime = useCallback(() => {
+    try {
+      const ctx = new AudioContext();
+      // E6, G#6, B6 — bright E major triad, bell-like
+      const notes = [1318.5, 1661.2, 1975.5];
+      const gap = 0.4; // pause between the two sets
+      [0, 1].forEach((set) => {
+        const setOffset = set * (notes.length * 0.18 + gap);
+        notes.forEach((freq, i) => {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = "sine";
+          osc.frequency.value = freq;
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          const startTime = ctx.currentTime + setOffset + i * 0.18;
+          gain.gain.setValueAtTime(0.06, startTime);
+          gain.gain.exponentialRampToValueAtTime(0.001, startTime + 0.5);
+          osc.start(startTime);
+          osc.stop(startTime + 0.5);
+        });
+      });
+      setTimeout(() => ctx.close(), 2500);
+    } catch {
+      /* audio not supported */
+    }
+  }, []);
+
   // --- Timer logic ---
   const selectPreset = (seconds: number) => {
     setTimerDuration(seconds);
@@ -238,7 +267,7 @@ export default function StartTaskPage() {
             clearInterval(intervalRef.current!);
             setTimerRunning(false);
             setTimerStarted(false); // exit focus mode when done
-            if (soundEnabledRef.current) playPing(); // final ping
+            if (soundEnabledRef.current) playChime(); // completion chime
             return 0;
           }
           // Ping every minute
@@ -249,7 +278,7 @@ export default function StartTaskPage() {
         });
       }, 1000);
     }
-  }, [timerRunning, timeRemaining, playPing]);
+  }, [timerRunning, timeRemaining, playPing, playChime]);
 
   const resetTimer = () => {
     if (intervalRef.current) clearInterval(intervalRef.current);
