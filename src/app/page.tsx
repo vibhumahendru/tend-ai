@@ -112,20 +112,14 @@ export default function LandingPage() {
           </svg>
         </Link>
 
-        {/* Hero screenshot placeholder */}
+        {/* Hero screenshot */}
         <div className="mt-16 md:mt-20 relative">
-          <div className="bg-gray-900 border border-gray-800/60 rounded-2xl overflow-hidden aspect-[16/10] flex items-center justify-center">
-            <div className="text-center">
-              <div className="w-16 h-16 rounded-2xl bg-gray-800/60 flex items-center justify-center mx-auto mb-4">
-                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-gray-600">
-                  <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-                  <circle cx="8.5" cy="8.5" r="1.5" />
-                  <polyline points="21 15 16 10 5 21" />
-                </svg>
-              </div>
-              <p className="text-sm text-gray-600 font-medium">App screenshot</p>
-              <p className="text-xs text-gray-700 mt-1">1200 x 750 recommended</p>
-            </div>
+          <div className="bg-gray-900 border border-gray-800/60 rounded-xl md:rounded-2xl overflow-hidden">
+            <img
+              src="/screenshots/hero-ramble.png"
+              alt="Tend AI — voice ramble creates structured tasks"
+              className="w-full h-auto"
+            />
           </div>
           {/* Subtle glow behind the screenshot */}
           <div className="absolute -inset-4 -z-10 bg-violet-600/5 rounded-3xl blur-3xl" />
@@ -266,50 +260,88 @@ export default function LandingPage() {
         </div>
       </section>
 
+      {/* ========== YOUR PEOPLE ========== */}
+      <section className="max-w-5xl mx-auto px-6 py-20 md:py-28">
+        <div className="text-center mb-12">
+          <p className="text-xs font-semibold text-emerald-400 uppercase tracking-widest mb-3">Your people</p>
+          <h2 className="text-3xl md:text-4xl font-bold tracking-tight">
+            Never lose track of anyone
+          </h2>
+          <p className="text-gray-400 mt-4 max-w-xl mx-auto">
+            Every person in your life gets a card with notes, tags, and a timeline
+            of your interactions — all searchable instantly.
+          </p>
+        </div>
+        <div className="relative">
+          <div className="bg-gray-900 border border-gray-800/60 rounded-xl md:rounded-2xl overflow-hidden">
+            <img
+              src="/screenshots/people-grid.png"
+              alt="Tend AI — contacts grid with notes and recency"
+              className="w-full h-auto"
+            />
+          </div>
+          <div className="absolute -inset-4 -z-10 bg-emerald-600/5 rounded-3xl blur-3xl" />
+        </div>
+      </section>
+
       {/* ========== SCREENSHOTS / FEATURE HIGHLIGHTS ========== */}
       <section className="max-w-6xl mx-auto px-6 py-20 md:py-28">
+        <div className="text-center mb-12">
+          <p className="text-xs font-semibold text-violet-400 uppercase tracking-widest mb-3">In action</p>
+          <h2 className="text-3xl md:text-4xl font-bold tracking-tight">
+            See it for yourself
+          </h2>
+        </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {/* Screenshot placeholder 1 */}
-          <div className="bg-gray-900 border border-gray-800/60 rounded-2xl overflow-hidden aspect-[4/3] flex items-center justify-center">
-            <div className="text-center">
-              <div className="w-12 h-12 rounded-xl bg-gray-800/60 flex items-center justify-center mx-auto mb-3">
-                <TimerIcon />
-              </div>
-              <p className="text-sm text-gray-500 font-medium">Focus Mode</p>
-              <p className="text-xs text-gray-700 mt-1">Screenshot placeholder</p>
+          {/* Focus Mode */}
+          <div className="relative bg-gray-900 border border-gray-800/60 rounded-xl md:rounded-2xl overflow-hidden group">
+            <img
+              src="/screenshots/focus-timer.png"
+              alt="Focus mode — distraction-free timer with task checklist"
+              className="w-full h-auto"
+            />
+            <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-gray-950/90 to-transparent px-4 py-3 md:px-5 md:py-4">
+              <p className="text-xs md:text-sm font-semibold text-gray-100">Focus Mode</p>
+              <p className="text-[11px] md:text-xs text-gray-400">Timer, checklist, zero distractions</p>
             </div>
           </div>
 
-          {/* Screenshot placeholder 2 */}
-          <div className="bg-gray-900 border border-gray-800/60 rounded-2xl overflow-hidden aspect-[4/3] flex items-center justify-center">
-            <div className="text-center">
-              <div className="w-12 h-12 rounded-xl bg-gray-800/60 flex items-center justify-center mx-auto mb-3">
-                <MicIcon />
-              </div>
-              <p className="text-sm text-gray-500 font-medium">Task Creation</p>
-              <p className="text-xs text-gray-700 mt-1">Screenshot placeholder</p>
+          {/* AI Task Planning */}
+          <div className="relative bg-gray-900 border border-gray-800/60 rounded-xl md:rounded-2xl overflow-hidden group">
+            <img
+              src="/screenshots/focus-setup.png"
+              alt="AI task planning — ramble turned into actionable steps"
+              className="w-full h-auto"
+            />
+            <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-gray-950/90 to-transparent px-4 py-3 md:px-5 md:py-4">
+              <p className="text-xs md:text-sm font-semibold text-gray-100">AI Task Planning</p>
+              <p className="text-[11px] md:text-xs text-gray-400">Ramble your plan, get checkable steps</p>
             </div>
           </div>
 
-          {/* Screenshot placeholder 3 */}
-          <div className="bg-gray-900 border border-gray-800/60 rounded-2xl overflow-hidden aspect-[4/3] flex items-center justify-center">
-            <div className="text-center">
-              <div className="w-12 h-12 rounded-xl bg-gray-800/60 flex items-center justify-center mx-auto mb-3">
-                <PeopleIcon />
-              </div>
-              <p className="text-sm text-gray-500 font-medium">Relationship Memory</p>
-              <p className="text-xs text-gray-700 mt-1">Screenshot placeholder</p>
+          {/* Smart Task Manager */}
+          <div className="relative bg-gray-900 border border-gray-800/60 rounded-xl md:rounded-2xl overflow-hidden group">
+            <img
+              src="/screenshots/tasks-list.png"
+              alt="Smart task manager — focus, urgent, and categorized tasks"
+              className="w-full h-auto"
+            />
+            <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-gray-950/90 to-transparent px-4 py-3 md:px-5 md:py-4">
+              <p className="text-xs md:text-sm font-semibold text-gray-100">Smart Task Manager</p>
+              <p className="text-[11px] md:text-xs text-gray-400">Focus flags, urgency, categories</p>
             </div>
           </div>
 
-          {/* Screenshot placeholder 4 */}
-          <div className="bg-gray-900 border border-gray-800/60 rounded-2xl overflow-hidden aspect-[4/3] flex items-center justify-center">
-            <div className="text-center">
-              <div className="w-12 h-12 rounded-xl bg-gray-800/60 flex items-center justify-center mx-auto mb-3">
-                <SearchIcon />
-              </div>
-              <p className="text-sm text-gray-500 font-medium">AI Search</p>
-              <p className="text-xs text-gray-700 mt-1">Screenshot placeholder</p>
+          {/* AI Search */}
+          <div className="relative bg-gray-900 border border-gray-800/60 rounded-xl md:rounded-2xl overflow-hidden group">
+            <img
+              src="/screenshots/ai-search.png"
+              alt="AI search — natural language query across contacts"
+              className="w-full h-auto"
+            />
+            <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-gray-950/90 to-transparent px-4 py-3 md:px-5 md:py-4">
+              <p className="text-xs md:text-sm font-semibold text-gray-100">AI Search</p>
+              <p className="text-[11px] md:text-xs text-gray-400">Ask anything about your network</p>
             </div>
           </div>
         </div>

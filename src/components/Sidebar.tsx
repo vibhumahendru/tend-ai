@@ -5,19 +5,19 @@ import { usePathname } from "next/navigation";
 import { useAuth } from "@/components/AuthProvider";
 
 const navItems = [
-  {
-    label: "Dashboard",
-    mobileLabel: "Home",
-    href: "/dashboard",
-    icon: (
-      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <rect x="3" y="3" width="7" height="7" rx="1" />
-        <rect x="14" y="3" width="7" height="7" rx="1" />
-        <rect x="3" y="14" width="7" height="7" rx="1" />
-        <rect x="14" y="14" width="7" height="7" rx="1" />
-      </svg>
-    ),
-  },
+  // {
+  //   label: "Dashboard",
+  //   mobileLabel: "Home",
+  //   href: "/dashboard",
+  //   icon: (
+  //     <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+  //       <rect x="3" y="3" width="7" height="7" rx="1" />
+  //       <rect x="14" y="3" width="7" height="7" rx="1" />
+  //       <rect x="3" y="14" width="7" height="7" rx="1" />
+  //       <rect x="14" y="14" width="7" height="7" rx="1" />
+  //     </svg>
+  //   ),
+  // },
   {
     label: "Notes",
     mobileLabel: "Notes",
@@ -64,21 +64,21 @@ const navItems = [
       </svg>
     ),
   },
-  {
-    label: "Graph View",
-    mobileLabel: "Graph",
-    href: "/graph",
-    icon: (
-      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <circle cx="6" cy="6" r="3" />
-        <circle cx="18" cy="6" r="3" />
-        <circle cx="6" cy="18" r="3" />
-        <circle cx="18" cy="18" r="3" />
-        <path d="M8.5 8.5l7 7" />
-        <path d="M15.5 8.5l-7 7" />
-      </svg>
-    ),
-  },
+  // {
+  //   label: "Graph View",
+  //   mobileLabel: "Graph",
+  //   href: "/graph",
+  //   icon: (
+  //     <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+  //       <circle cx="6" cy="6" r="3" />
+  //       <circle cx="18" cy="6" r="3" />
+  //       <circle cx="6" cy="18" r="3" />
+  //       <circle cx="18" cy="18" r="3" />
+  //       <path d="M8.5 8.5l7 7" />
+  //       <path d="M15.5 8.5l-7 7" />
+  //     </svg>
+  //   ),
+  // },
 ];
 
 function SignOutIcon() {
