@@ -112,19 +112,19 @@ export default function LandingPage() {
           </svg>
         </Link>
 
-        {/* Hero screenshot */}
-        <div className="mt-16 md:mt-20 relative">
-          <div className="bg-gray-900 border border-gray-800/60 rounded-xl md:rounded-2xl overflow-hidden">
-            <img
-              src="/screenshots/hero-ramble.png"
-              alt="Tend AI — voice ramble creates structured tasks"
-              className="w-full h-auto"
-            />
-          </div>
-          {/* Subtle glow behind the screenshot */}
-          <div className="absolute -inset-4 -z-10 bg-violet-600/5 rounded-3xl blur-3xl" />
-        </div>
+        {/* Hero screenshot — breaks out of text container for more width */}
       </section>
+      <div className="max-w-6xl mx-auto px-3 md:px-6 -mt-4 md:-mt-8 relative">
+        <div className="bg-gray-900 border border-gray-800/60 rounded-xl md:rounded-2xl overflow-hidden">
+          <img
+            src="/screenshots/hero-ramble.png"
+            alt="Tend AI — voice ramble creates structured tasks"
+            className="w-full h-auto"
+          />
+        </div>
+        {/* Subtle glow behind the screenshot */}
+        <div className="absolute -inset-4 -z-10 bg-violet-600/5 rounded-3xl blur-3xl" />
+      </div>
 
       {/* ========== FEATURES ========== */}
       <section className="max-w-6xl mx-auto px-6 py-20 md:py-28">
@@ -261,7 +261,7 @@ export default function LandingPage() {
       </section>
 
       {/* ========== YOUR PEOPLE ========== */}
-      <section className="max-w-5xl mx-auto px-6 py-20 md:py-28">
+      <section className="max-w-6xl mx-auto px-3 md:px-6 py-20 md:py-28">
         <div className="text-center mb-12">
           <p className="text-xs font-semibold text-emerald-400 uppercase tracking-widest mb-3">Your people</p>
           <h2 className="text-3xl md:text-4xl font-bold tracking-tight">
@@ -285,7 +285,7 @@ export default function LandingPage() {
       </section>
 
       {/* ========== SCREENSHOTS / FEATURE HIGHLIGHTS ========== */}
-      <section className="max-w-6xl mx-auto px-6 py-20 md:py-28">
+      <section className="max-w-6xl mx-auto px-3 md:px-6 py-20 md:py-28">
         <div className="text-center mb-12">
           <p className="text-xs font-semibold text-violet-400 uppercase tracking-widest mb-3">In action</p>
           <h2 className="text-3xl md:text-4xl font-bold tracking-tight">
