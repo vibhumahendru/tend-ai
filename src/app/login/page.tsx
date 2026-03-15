@@ -19,7 +19,7 @@ export default function LoginPage() {
 
   // Redirect if already signed in
   useEffect(() => {
-    if (!loading && session) router.push("/dashboard");
+    if (!loading && session) router.push("/notes");
   }, [loading, session, router]);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -33,7 +33,7 @@ export default function LoginPage() {
       if (error) {
         setError(error.message);
       } else {
-        router.push("/dashboard");
+        router.push("/notes");
       }
     } else {
       const { error } = await signUp(email, password);
